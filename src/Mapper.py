@@ -1,6 +1,7 @@
 import os
 import sys
 import random
+import cv2
 import numpy as np
 import torch
 
@@ -12,6 +13,36 @@ from src.utils.sh_utils import RGB2SH
 from src.utils.gaussian_utils import transform_to_frame, build_rotation
 from src.Render import get_rasterizationSettings, transformed_params2rendervar
 from gaussian_semantic_rasterization import GaussianRasterizer
+
+def compute_depth_from_stereo(left_img, right_img, intrinsics, baseline):
+    """
+    使用 OpenCV SGBM 从双目图计算深度图
+    """
+    # 转灰度
+    left_gray = cv2.cvtColor(left_img, cv2.COLOR_RGB2GRAY)
+    right_gray = cv2.cvtColor(right_img, cv2.COLOR_RGB2GRAY)
+
+    # 创建 SGBM 匹配器
+    stereo = cv2.StereoSGBM_create(
+        minDisparity=0,
+        numDisparities=128,  # 要被16整除
+        blockSize=5,
+        P1=8 * 3 * 5**2,
+        P2=32 * 3 * 5**2,
+        mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY
+    )
+
+    # 计算视差图
+    disparity = stereo.compute(left_gray, right_gray).astype(np.float32) / 16.0  # [H, W]
+
+    # 转换为深度图
+    focal_length = intrinsics[0][0]  # fx
+    depth = (focal_length * baseline) / (disparity + 1e-6)  # 避免除以0
+    depth[disparity <= 0] = 0  # 过滤无效视差
+
+    # 转换为 torch.Tensor，形状为 (1, H, W)
+    depth_tensor = torch.from_numpy(depth).unsqueeze(0).cuda().float()
+    return depth_tensor
 
 def get_pointcloud(color, depth, intrinsics, w2c, transform_pts=True, 
                    mask=None, compute_mean_sq_dist=False, mean_sq_dist_method="projective", random_select=False):
