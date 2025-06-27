@@ -46,6 +46,9 @@ def compute_depth_from_stereo(left_img, right_img, intrinsics, baseline):
 
 def get_pointcloud(color, depth, intrinsics, w2c, transform_pts=True, 
                    mask=None, compute_mean_sq_dist=False, mean_sq_dist_method="projective", random_select=False):
+    """
+    将彩色图像与深度图像转换为三维点云，并可选地进行坐标变换、高斯尺度估计（均方距离）、掩码筛选和随机采样
+    """
     width, height = color.shape[2], color.shape[1]
     CX = intrinsics[0][2]
     CY = intrinsics[1][2]
@@ -62,8 +65,10 @@ def get_pointcloud(color, depth, intrinsics, w2c, transform_pts=True,
     yy = yy.reshape(-1)
     depth_z = depth[0].reshape(-1)
 
-    # Initialize point cloud
+    # points in camera coordinates
     pts_cam = torch.stack((xx * depth_z, yy * depth_z, depth_z), dim=-1)
+
+    # transform points to world coordinates if required
     if transform_pts:
         pix_ones = torch.ones(height * width, 1).cuda().float()
         pts4 = torch.cat((pts_cam, pix_ones), dim=1)
@@ -183,6 +188,9 @@ def initialize_first_timestep(dataset, num_frames, scene_radius_depth_ratio, mea
     return params, variables, intrinsics, w2c, cam
     
 def initialize_new_params(new_pt_cld, mean3_sq_dist, gaussian_distribution, num_objects=16):
+    """
+    初始化新点云中每个点对应的高斯参数
+    """
     num_pts = new_pt_cld.shape[0]
     means3D = new_pt_cld[:, :3] # [num_gaussians, 3]
     unnorm_rots = np.tile([1, 0, 0, 0], (num_pts, 1)) # [num_gaussians, 4]
@@ -240,7 +248,7 @@ def add_new_gaussians_alpha(params, variables, curr_data, densify_thres, time_id
     depth_error = torch.abs(gt_depth - render_depth) * (gt_depth > 0)
     non_presence_depth_mask = (render_depth > gt_depth) * (depth_error > 50 * depth_error.median())
     
-    non_presence_mask = non_presence_alpha_mask | non_presence_depth_mask
+    non_presence_mask = non_presence_alpha_mask | non_presence_depth_mask   # 逻辑或操作，得到非存在点的掩码，即需要补充新点的地方
 
     # Flatten mask
     non_presence_mask = non_presence_mask.reshape(-1)

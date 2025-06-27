@@ -78,6 +78,9 @@ def inverse_sigmoid(x):
 
 
 def prune_gaussians(params, variables, optimizer, iter, prune_dict):
+    """
+    定期剪枝（删除）无用或不合格的高斯
+    """
     if iter <= prune_dict['stop_after']:
         if (iter >= prune_dict['start_after']) and (iter % prune_dict['prune_every'] == 0):
             if iter == prune_dict['stop_after']:
@@ -88,8 +91,8 @@ def prune_gaussians(params, variables, optimizer, iter, prune_dict):
             to_remove = (torch.sigmoid(params['logit_opacities']) < remove_threshold).squeeze()
             # Remove Gaussians that are too big
             if iter >= prune_dict['remove_big_after']:
-                big_points_ws = torch.exp(params['log_scales']).max(dim=1).values > 0.1 * variables['scene_radius']
-                small_points_ws = torch.exp(params['log_scales']).min(dim=1).values < 0.001 * variables['scene_radius']
+                big_points_ws = torch.exp(params['log_scales']).max(dim=1).values > 0.1 * variables['scene_radius']     # 移除scale > 0.1 * 场景大小，太大
+                small_points_ws = torch.exp(params['log_scales']).min(dim=1).values < 0.001 * variables['scene_radius'] # 移除scale < 0.001 * 场景大小，太小
                 to_remove = torch.logical_or(to_remove, big_points_ws)
                 to_remove = torch.logical_or(to_remove, small_points_ws)
             
@@ -106,6 +109,9 @@ def prune_gaussians(params, variables, optimizer, iter, prune_dict):
 
 
 def densify(params, variables, optimizer, iter, densify_dict):
+    """
+    根据2D梯度强度对高斯点云进行动态克隆(clone, 小点)、分裂(split, 大点)和移除(remove, 太大的点)
+    """
     if iter <= densify_dict['stop_after']:
         variables = accumulate_mean2d_gradient(variables)
         grad_thresh = densify_dict['grad_thresh']
@@ -125,6 +131,7 @@ def densify(params, variables, optimizer, iter, densify_dict):
                                              'scene_radius'])
             n = densify_dict['num_to_split_into']  # number to split into
             new_params = {k: v[to_split].repeat(n, 1) for k, v in params.items() if k not in ['cam_unnorm_rots', 'cam_trans']}
+            # 为复制体添加噪声扰动
             stds = torch.exp(params['log_scales'])[to_split].repeat(n, 3)
             means = torch.zeros((stds.size(0), 3), device="cuda")
             samples = torch.normal(mean=means, std=stds)

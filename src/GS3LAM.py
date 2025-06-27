@@ -31,7 +31,8 @@ def run_gs3lam(config: dict):
         config['tracking']['depth_loss_thres'] = 100000
 
     # print(f"{config}")
-        
+
+    # Create Output Directories
     output_dir = os.path.join(config["workdir"], config["run_name"])
     eval_dir = os.path.join(output_dir, "eval")
     os.makedirs(eval_dir, exist_ok=True)
@@ -39,6 +40,7 @@ def run_gs3lam(config: dict):
     device = torch.device(config["primary_device"])
 
     # Load Dataset
+    print("Loading Dataset ...")
     dataset_config = config["data"]
     if "gradslam_data_cfg" not in dataset_config:
         gradslam_data_cfg = {}
@@ -103,6 +105,7 @@ def run_gs3lam(config: dict):
     semantic_decoder = SemanticDecoder(config['semantic']["num_objects"], config['semantic']["num_classes"])
 
     for time_idx in tqdm(range(0, num_frames)):
+
         #####################################################
         ###                 Data Reader                   ###
         #####################################################
@@ -110,7 +113,6 @@ def run_gs3lam(config: dict):
         # Load RGBD frames incrementally instead of all frames
         color, depth, _, gt_pose, gt_objects = dataset[time_idx]
         
-
         # Process poses
         gt_w2c = torch.linalg.inv(gt_pose)
         # Process RGB-D Data
@@ -119,7 +121,9 @@ def run_gs3lam(config: dict):
         gt_w2c_all_frames.append(gt_w2c)
         curr_gt_w2c = gt_w2c_all_frames
 
+        # Optimize only current time step for tracking
         iter_time_idx = time_idx
+        # Initialize Mapping Data for selected frame
         curr_data = {'cam': cam, 'im': color, 'depth': depth, 'obj': gt_objects, 
                      'id': iter_time_idx, 'intrinsics': intrinsics, 
                      'w2c': first_frame_w2c, 'iter_gt_w2c_list': curr_gt_w2c}
@@ -152,6 +156,7 @@ def run_gs3lam(config: dict):
             progress_bar = tqdm(range(num_iters_tracking), desc=f"Tracking Time Step: {time_idx}")
 
             t_iter_start.record()
+
             while True:
                 iter_start_time = time.time()
                 # Loss for current frame
@@ -188,10 +193,12 @@ def run_gs3lam(config: dict):
                         report_progress(params, tracking_curr_data, iter+1, progress_bar, iter_time_idx, tracking=True)
                     else:
                         progress_bar.update(1)
+
                 # Update the runtime numbers
                 iter_end_time = time.time()
                 tracking_iter_time_sum += iter_end_time - iter_start_time
                 tracking_iter_time_count += 1
+
                 # Check if we should stop tracking
                 iter += 1
                 torch.cuda.empty_cache()
@@ -216,6 +223,7 @@ def run_gs3lam(config: dict):
             with torch.no_grad():
                 params['cam_unnorm_rots'][..., time_idx] = candidate_cam_unnorm_rot
                 params['cam_trans'][..., time_idx] = candidate_cam_tran
+
         elif time_idx > 0 and config['tracking']['use_gt_poses']:
             with torch.no_grad():
                 # Get the ground truth pose relative to frame 0
@@ -243,8 +251,6 @@ def run_gs3lam(config: dict):
                 save_params_ckpt(params, ckpt_output_dir, time_idx)
                 print('Failed to evaluate trajectory.')
 
-
-
         #####################################################
         ###                 Mapping                       ###
         #####################################################
@@ -264,30 +270,6 @@ def run_gs3lam(config: dict):
                                                     config['mean_sq_dist_method'],
                                                     gaussian_distribution=config['gaussian_distribution'],
                                                     num_objects=config['semantic']["num_objects"])
-
-                # post_num_pts = params['means3D'].shape[0]
-               
-            # with torch.no_grad():
-            #     # Get the current estimated rotation & translation
-            #     curr_cam_rot = F.normalize(params['cam_unnorm_rots'][..., time_idx].detach())
-            #     curr_cam_tran = params['cam_trans'][..., time_idx].detach()
-            #     curr_w2c = torch.eye(4).cuda().float()
-            #     curr_w2c[:3, :3] = build_rotation(curr_cam_rot)
-            #     curr_w2c[:3, 3] = curr_cam_tran
-            #     # Select Keyframes for Mapping
-            #     num_keyframes = config['mapping_window_size']-2
-            #     # Check curr data for keyframe selection
-            #     selected_keyframes = keyframe_selection_overlap_object(depth, curr_w2c, intrinsics, keyframe_list[:-1], num_keyframes)
-            #     selected_time_idx = [keyframe_list[frame_idx]['id'] for frame_idx in selected_keyframes]
-            #     if len(keyframe_list) > 0:
-            #         # Add last keyframe to the selected keyframes
-            #         selected_time_idx.append(keyframe_list[-1]['id'])
-            #         selected_keyframes.append(len(keyframe_list)-1)
-            #     # Add current frame to the selected keyframes
-            #     selected_time_idx.append(time_idx)
-            #     selected_keyframes.append(-1)
-            #     # Print the selected keyframes
-            #     print(f"\nSelected Keyframes at Frame {time_idx}: {selected_time_idx}")
 
             # Reset Optimizer & Learning Rates for Full Map Optimization
             mapping_optimizer = initialize_optimizer(params, config['mapping']['lrs'], tracking=False)
@@ -324,11 +306,13 @@ def run_gs3lam(config: dict):
                         iter_object = keyframe_list[keyframe_idx]['obj']
 
                 # Record keyframe opt times
+                # 统计每个帧的优化次数
                 if iter_time_idx in frame_freps:
                     frame_freps[iter_time_idx] += 1
                 else:
                     frame_freps[iter_time_idx] = 1
 
+                # 提到从第0帧到当前帧的所有位姿
                 iter_gt_w2c = gt_w2c_all_frames[:iter_time_idx+1]
                 
                 if config['mapping']["use_semantic_for_mapping"]:
@@ -408,6 +392,10 @@ def run_gs3lam(config: dict):
                     print('Failed to evaluate trajectory.')
         
         # Add frame to keyframe list
+        # 满足三个条件之一，并且当前帧的真值位姿不含inf和nan，就将当前帧标记为关键帧：
+        # 1. 第一帧，time_idx == 0;
+        # 2. 每隔 keyframe_every 帧
+        # 3. 倒数第二帧
         if ((time_idx == 0) or ((time_idx+1) % config['keyframe_every'] == 0) or \
                     (time_idx == num_frames-2)) and (not torch.isinf(curr_gt_w2c[-1]).any()) and (not torch.isnan(curr_gt_w2c[-1]).any()):
             with torch.no_grad():

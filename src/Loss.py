@@ -53,7 +53,7 @@ def get_loss(params, curr_data, variables, iter_time_idx, loss_weights,
     # Rendering
     rendervar['means2D'].retain_grad()
     rendered_image, rendered_objects, radii, rendered_depth, rendered_alpha = GaussianRasterizer(raster_settings=curr_data["cam"])(**rendervar)
-    variables['means2D'] = rendervar['means2D']  # Gradient only accum from colour render for densification
+    variables['means2D'] = rendervar['means2D']  # Gradient only accum from color render for densification
 
     # Mask with valid depth values (accounts for outlier depth values)
     nan_mask = (~torch.isnan(rendered_depth))
@@ -87,8 +87,9 @@ def get_loss(params, curr_data, variables, iter_time_idx, loss_weights,
     else:
         losses['im'] = 0.8 * l1_loss_v1(rendered_image, curr_data['im']) + 0.2 * (1.0 - calc_ssim(rendered_image, curr_data['im']))
     
+    # Semantic Loss
     gt_obj = curr_data["obj"].long()
-    logits = semantic_decoder(rendered_objects)
+    logits = semantic_decoder(rendered_objects) # type: ignore
     cls_criterion = torch.nn.CrossEntropyLoss(reduction='none')
     if tracking and use_semantic_for_tracking:
         if ignore_outlier_depth_loss:
