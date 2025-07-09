@@ -18,6 +18,7 @@ def cpu_deep_copy_tuple(input_tuple):
     copied_tensors = [item.cpu().clone() if isinstance(item, torch.Tensor) else item for item in input_tuple]
     return tuple(copied_tensors)
 
+# 调用_RasterizeGaussians的自动求导函数
 def rasterize_gaussians(
     means3D,
     means2D,
@@ -43,6 +44,7 @@ def rasterize_gaussians(
         raster_settings,
     )
 
+# 自动求导类
 class _RasterizeGaussians(torch.autograd.Function):
     @staticmethod
     def forward(
@@ -101,6 +103,7 @@ class _RasterizeGaussians(torch.autograd.Function):
         ctx.save_for_backward(colors_precomp, means3D, scales, rotations, cov3Ds_precomp, radii, sh, sh_objs, geomBuffer, binningBuffer, imgBuffer, alpha)
         return color, objects, radii, depth, alpha
 
+    # 从ctx恢复前向过程保存的变量，再次组装参数列表，并调用CUDA的backward
     @staticmethod
     def backward(ctx, grad_color, grad_out_objects, grad_radii, grad_depth, grad_alpha):
 
@@ -164,6 +167,7 @@ class _RasterizeGaussians(torch.autograd.Function):
 
         return grads
 
+# 配置类
 class GaussianRasterizationSettings(NamedTuple):
     image_height: int
     image_width: int 
@@ -178,11 +182,13 @@ class GaussianRasterizationSettings(NamedTuple):
     prefiltered : bool
     debug : bool
 
+
 class GaussianRasterizer(nn.Module):
     def __init__(self, raster_settings):
         super().__init__()
         self.raster_settings = raster_settings
 
+    # 计算在视锥范围内可见的点
     def markVisible(self, positions):
         # Mark visible points (based on frustum culling for camera) with a boolean 
         with torch.no_grad():
