@@ -155,6 +155,9 @@ config = dict(
             reset_opacities_every=3000, # Doesn't consider iter 0
         ),
     ),
+    loop_closure=dict(
+        use_loop_closure=True,
+    ),
     viz=dict(
         render_mode='color', # ['color', 'depth' or 'centers']
         offset_first_viz_cam=True, # Offsets the view camera back by 0.5 units along the view direction (For Final Recon Viz)
