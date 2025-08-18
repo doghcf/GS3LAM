@@ -14,6 +14,7 @@ basedir = "./data/TUM-DEVA"
 first_frame_mapping_iters = 1000
 tracking_iters = 360
 mapping_iters = 150
+loop_closure_iters = 500
 opt_rskm_interval=5
 densify_thres=0.5 # For Addition of new Gaussians
 end_frame = -1
@@ -154,6 +155,13 @@ config = dict(
             final_removal_opacity_threshold=0.005,
             reset_opacities_every=3000, # Doesn't consider iter 0
         ),
+    ),
+    loop_closure=dict(
+        use_loop_closure=True,
+        num_iters=loop_closure_iters,
+        min_similarity=0.5,
+        pgo_edge_prune_thres=0.25,
+        voxel_size=0.02,
     ),
     viz=dict(
         render_mode='color', # ['color', 'depth' or 'centers']

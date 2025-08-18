@@ -5,6 +5,7 @@ from src.datasets.replica import ReplicaSemanticDataset
 from src.datasets.tum import TUMSemanticDataset
 from src.datasets.scannet import ScannetSemanticDataset
 
+
 def get_dataset(config_dict, basedir, sequence, **kwargs):
     if config_dict["dataset_name"].lower() in ["replica"]:
         return ReplicaSemanticDataset(config_dict, basedir, sequence, **kwargs)
@@ -12,6 +13,8 @@ def get_dataset(config_dict, basedir, sequence, **kwargs):
         return ScannetSemanticDataset(config_dict, basedir, sequence, **kwargs)
     elif config_dict["dataset_name"].lower() in ["tum"]:
         return TUMSemanticDataset(config_dict, basedir, sequence, **kwargs)
+    elif config_dict["dataset_name"].lower() in ["kitti"]:
+        return 
     else:
         raise ValueError(f"Unknown dataset name {config_dict['dataset_name']}")
     
