@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import random
+import cv2
 
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -13,7 +14,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 
 from src.datasets.dataconfig import load_dataset_config, get_dataset
-from src.Mapper import initialize_first_timestep, add_new_gaussians_alpha
+from src.Mapper import initialize_first_timestep, add_new_gaussians_alpha, initialize_first_timestep_stereo
 from src.Tracker import initialize_camera_pose
 from src.Loss import initialize_optimizer, get_loss
 from src.Evaluater import eval
@@ -72,11 +73,19 @@ def run_gs3lam(config: dict):
         num_frames = len(dataset)
 
     # Initialize Parameters & Canoncial Camera parameters
-    params, variables, intrinsics, first_frame_w2c, cam = initialize_first_timestep(
-        dataset, num_frames, config['scene_radius_depth_ratio'],
-        config['mean_sq_dist_method'], gaussian_distribution=config['gaussian_distribution'],
-        num_objects=config['semantic']["num_objects"]
-    )
+    if dataset_config["use_stereo"]:
+        params, variables, intrinsics, first_frame_w2c, cam = initialize_first_timestep_stereo(
+            dataset, num_frames, config['scene_radius_depth_ratio'],
+            config['mean_sq_dist_method'], gradslam_data_cfg['camera_params']['baseline'],
+            gaussian_distribution=config['gaussian_distribution'],
+            num_objects=config['semantic']["num_objects"]
+        )
+    else:
+        params, variables, intrinsics, first_frame_w2c, cam = initialize_first_timestep(
+            dataset, num_frames, config['scene_radius_depth_ratio'],
+            config['mean_sq_dist_method'], gaussian_distribution=config['gaussian_distribution'],
+            num_objects=config['semantic']["num_objects"]
+        )
     
     # Initialize list to keep track of Keyframes
     keyframe_list = []
@@ -110,24 +119,71 @@ def run_gs3lam(config: dict):
         #####################################################
         ###                 Data Reader                   ###
         #####################################################
+        if dataset_config["use_stereo"]:
+            color, color_right, _, gt_pose, gt_objects = dataset[time_idx]
 
-        # Load RGBD frames incrementally instead of all frames
-        color, depth, _, gt_pose, gt_objects = dataset[time_idx]
-        
-        # Process poses
-        gt_w2c = torch.linalg.inv(gt_pose)
-        # Process RGB-D Data
-        color = color.permute(2, 0, 1) / 255 # BGR->RGB
-        depth = depth.permute(2, 0, 1)
-        gt_w2c_all_frames.append(gt_w2c)
-        curr_gt_w2c = gt_w2c_all_frames
+            # Process poses
+            gt_w2c = torch.linalg.inv(gt_pose)
+            # Process RGB-D Data
+            color = color.permute(2, 0, 1) / 255 # BGR->RGB
+            color_right = color.permute(2, 0, 1) / 255 # BGR->RGB
 
-        # Optimize only current time step for tracking
-        iter_time_idx = time_idx
-        # Initialize Mapping Data for selected frame
-        curr_data = {'cam': cam, 'im': color, 'depth': depth, 'obj': gt_objects, 
-                     'id': iter_time_idx, 'intrinsics': intrinsics, 
-                     'w2c': first_frame_w2c, 'iter_gt_w2c_list': curr_gt_w2c}
+            # ---- Stereo disparity → depth ----
+            left_np = (color.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+            right_np = (color_right.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+            grayL = cv2.cvtColor(left_np, cv2.COLOR_RGB2GRAY)
+            grayR = cv2.cvtColor(right_np, cv2.COLOR_RGB2GRAY)
+
+            stereo = cv2.StereoSGBM_create(
+                minDisparity=0,
+                numDisparities=96,   # 16的倍数
+                blockSize=5,
+                P1=8 * 3 * 5 ** 2,
+                P2=32 * 3 * 5 ** 2,
+                disp12MaxDiff=1,
+                uniquenessRatio=10,
+                speckleWindowSize=100,
+                speckleRange=32
+            )
+            disparity = stereo.compute(grayL, grayR).astype(np.float32) / 16.0
+
+            fx = intrinsics[0, 0].item()
+            baseline = gradslam_data_cfg['camera_params']['baseline']
+            depth_np = np.zeros_like(disparity, dtype=np.float32)
+            valid = disparity > 0
+            depth_np[valid] = fx * baseline / (disparity[valid] + 1e-6)
+
+            depth = torch.from_numpy(depth_np).unsqueeze(0).to(color.device)  # (1,H,W)
+            
+            gt_w2c_all_frames.append(gt_w2c)
+            curr_gt_w2c = gt_w2c_all_frames
+
+            # Optimize only current time step for tracking
+            iter_time_idx = time_idx
+            # Initialize Mapping Data for selected frame
+            curr_data = {'cam': cam, 'im': color, 'depth': depth, 'obj': gt_objects, 
+                        'id': iter_time_idx, 'intrinsics': intrinsics, 
+                        'w2c': first_frame_w2c, 'iter_gt_w2c_list': curr_gt_w2c}
+
+
+        else:
+            # Load RGBD frames incrementally instead of all frames
+            color, depth, _, gt_pose, gt_objects = dataset[time_idx]
+            
+            # Process poses
+            gt_w2c = torch.linalg.inv(gt_pose)
+            # Process RGB-D Data
+            color = color.permute(2, 0, 1) / 255 # BGR->RGB
+            depth = depth.permute(2, 0, 1)
+            gt_w2c_all_frames.append(gt_w2c)
+            curr_gt_w2c = gt_w2c_all_frames
+
+            # Optimize only current time step for tracking
+            iter_time_idx = time_idx
+            # Initialize Mapping Data for selected frame
+            curr_data = {'cam': cam, 'im': color, 'depth': depth, 'obj': gt_objects, 
+                        'id': iter_time_idx, 'intrinsics': intrinsics, 
+                        'w2c': first_frame_w2c, 'iter_gt_w2c_list': curr_gt_w2c}
 
 
         #####################################################

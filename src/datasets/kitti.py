@@ -1,3 +1,4 @@
+import glob
 import os
 from typing import Optional
 import numpy as np
@@ -19,11 +20,12 @@ class KITTISemanticDataset(GradSLAMDataset):
         load_embeddings: Optional[bool] = False,
         embedding_dir: Optional[str] = "embeddings",
         embedding_dim: Optional[int] = 512,
+        load_stereo: Optional[bool] = True,
         **kwargs,
     ):
-        print("Load Replica dataset!!!")
+        print("Load KITTI dataset!!!")
         self.input_folder = os.path.join(basedir, sequence)
-        self.pose_path = os.path.join(self.input_folder, "poses.txt")
+        self.pose_path = None
         super().__init__(
             config_dict,
             stride=stride,
@@ -34,19 +36,20 @@ class KITTISemanticDataset(GradSLAMDataset):
             load_embeddings=load_embeddings,
             embedding_dir=embedding_dir,
             embedding_dim=embedding_dim,
+            load_stereo=load_stereo,
             **kwargs,
         )
 
     def get_filepaths(self):
-        color_paths = sorted(glob.glob(f"{self.input_folder}/image_2/*.png"))
-        depth_paths = sorted(glob.glob(f"{self.input_folder}/depth/*.png"))
+        left_color_paths = sorted(glob.glob(f"{self.input_folder}/image_0/*.png"))
+        right_color_paths = sorted(glob.glob(f"{self.input_folder}/image_1/*.png"))
         object_paths = sorted(glob.glob(f"{self.input_folder}/semantic/*.png"))
         
         embedding_paths = None
         if self.load_embeddings:
             embedding_paths = sorted(glob.glob(f"{self.input_folder}/{self.embedding_dir}/*.pt"))
         
-        return color_paths, depth_paths, object_paths, embedding_paths
+        return left_color_paths, right_color_paths, object_paths, embedding_paths
 
     def load_poses(self):
         poses = []

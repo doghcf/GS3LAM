@@ -1,31 +1,26 @@
 from datetime import datetime
 
 primary_device="cuda:0"
-
-# scenes = ["freiburg1_desk", "freiburg1_desk2", "freiburg1_room", "freiburg2_xyz", "freiburg3_long_office_household"]
-scenes = ["freiburg1_desk"]
-
 seed = 1
-scene_name = scenes[0]
+scene_name = "00"
 
-basedir = "./data/TUM-DEVA"
+basedir = "./data/KITTI-DEVA"
 
 # General Settings
 first_frame_mapping_iters = 1000
-tracking_iters = 360
-mapping_iters = 150
-opt_rskm_interval=5
-densify_thres=0.5 # For Addition of new Gaussians
+tracking_iters = 40
+mapping_iters = 60
+opt_rskm_interval = 5
+densify_thres = 0.5 # For Addition of new Gaussians
 end_frame = -1
 
-# mapping
-use_semantic_for_mapping=True
+use_semantic_for_mapping = True
 
 map_every = 1 # add Gaussians
 keyframe_every = 5
 mapping_window_size = 20
 
-group_name = "TUM"
+group_name = "KITTI"
 run_name = str(datetime.now().strftime("%y%m%d-%H:%M:%S"))
 
 config = dict(
@@ -49,14 +44,15 @@ config = dict(
     checkpoint_interval=100, # Checkpoint Interval
     data=dict(
         basedir=basedir,
-        gradslam_data_cfg=f"./configs/camera/TUM/{scene_name}.yaml",
-        sequence=f"rgbd_dataset_{scene_name}",
+        gradslam_data_cfg=f"./configs/camera/KITTI/{scene_name}.yaml",
+        sequence=scene_name,
         desired_image_height=480,
         desired_image_width=640,
         start=0,
         end=end_frame,
         stride=1,
         num_frames=-1,
+        use_stereo=True, # Use Stereo Images
     ),
     use_semantic=True,
     semantic=dict(

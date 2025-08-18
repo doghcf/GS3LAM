@@ -128,14 +128,12 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             self.crop_edge = config_dict["camera_params"]["crop_edge"]
 
         if self.load_stereo:
-            self.color_paths, self.color_paths_right, self.object_paths, self.embedding_paths = self.get_filepaths()
-            if len(self.color_paths) != len(self.color_paths_right):
-                raise ValueError("Number of left and right images must be the same.")
-        else:
+            self.left_color_paths, self.right_color_paths, self.object_paths, self.embedding_paths = self.get_filepaths()
+        else: 
             self.color_paths, self.depth_paths, self.object_paths, self.embedding_paths = self.get_filepaths()
-            if len(self.color_paths) != len(self.depth_paths):
-                raise ValueError("Number of color and depth images must be the same.")
         
+        if len(self.color_paths) != len(self.depth_paths):
+            raise ValueError("Number of color and depth images must be the same.")
         if self.load_embeddings:
             if len(self.color_paths) != len(self.embedding_paths):
                 raise ValueError("Mismatch between number of color images and number of embedding files.")
@@ -144,12 +142,9 @@ class GradSLAMDataset(torch.utils.data.Dataset):
 
         if self.end == -1:
             self.end = self.num_imgs
-        
+
         self.color_paths = self.color_paths[self.start : self.end : stride]
-        if self.load_stereo:
-            self.right_paths = self.right_paths[self.start : self.end : stride]
-        else:
-            self.depth_paths = self.depth_paths[self.start : self.end : stride]
+        self.depth_paths = self.depth_paths[self.start : self.end : stride]
         self.object_paths = self.object_paths[self.start : self.end : stride]
 
         if self.load_embeddings:
@@ -159,6 +154,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         self.retained_inds = torch.arange(self.num_imgs)[self.start : self.end : stride]
         # Update self.num_images after subsampling the dataset
         self.num_imgs = len(self.color_paths)
+
         self.poses = torch.stack(self.poses)
 
         if self.relative_pose: # True
@@ -272,100 +268,58 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         raise NotImplementedError
 
     def __getitem__(self, index):
-        if self.load_stereo:
-            left = np.asarray(imageio.imread(self.color_paths[index]), dtype=float)
-            right = np.asarray(imageio.imread(self.right_paths[index]), dtype=float)
-            left = self._preprocess_color(left)
-            right = self._preprocess_color(right)
+        color_path = self.color_paths[index]
+        depth_path = self.depth_paths[index]
+        
+        color = np.asarray(imageio.imread(color_path), dtype=float)
+        color = self._preprocess_color(color)
 
-            objects = None
-            if self.object_paths is not None and os.path.exists(self.object_paths[index]):
-                objects = np.asarray(cv2.imread(self.object_paths[index], cv2.IMREAD_UNCHANGED)).astype(np.uint8)
-                objects = self._preprocess_objects(objects)
-                objects = torch.from_numpy(objects)
+        object_path = self.object_paths[index]
+        objects = np.asarray(cv2.imread(object_path, cv2.IMREAD_UNCHANGED)).astype(np.uint8) if os.path.exists(object_path) else None
+        objects = self._preprocess_objects(objects)
+        objects = torch.from_numpy(objects)
 
-            K = as_intrinsics_matrix([self.fx, self.fy, self.cx, self.cy])
-            if self.distortion is not None:
-                left = cv2.undistort(left, K, self.distortion)
-                right = cv2.undistort(right, K, self.distortion)
-            K = datautils.scale_intrinsics(torch.from_numpy(K), self.height_downsample_ratio, self.width_downsample_ratio)
-            intrinsics = torch.eye(4).to(K)
-            intrinsics[:3, :3] = K
+        if ".png" in depth_path:
+            # depth_data = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
+            depth = np.asarray(imageio.imread(depth_path), dtype=np.int64)
+        elif ".exr" in depth_path:
+            print("Error depth format!!!")
+            # depth = readEXR_onlydepth(depth_path)
 
-            pose = self.transformed_poses[index]
+        K = as_intrinsics_matrix([self.fx, self.fy, self.cx, self.cy])
+        if self.distortion is not None:
+            # undistortion is only applied on color image, not depth!
+            color = cv2.undistort(color, K, self.distortion)
 
-            if self.load_embeddings:
-                embedding = self.read_embedding_from_file(self.embedding_paths[index])
-                return (
-                    torch.from_numpy(left).to(self.device).type(self.dtype),
-                    torch.from_numpy(right).to(self.device).type(self.dtype),
-                    intrinsics.to(self.device).type(self.dtype),
-                    pose.to(self.device).type(self.dtype),
-                    objects.to(self.device).type(self.dtype) if objects is not None else None,
-                    embedding.to(self.device),
-                )
+        color = torch.from_numpy(color)
+        K = torch.from_numpy(K)
 
+        depth = self._preprocess_depth(depth)
+        depth = torch.from_numpy(depth)
+
+        K = datautils.scale_intrinsics(K, self.height_downsample_ratio, self.width_downsample_ratio)
+        intrinsics = torch.eye(4).to(K)
+        intrinsics[:3, :3] = K
+
+        pose = self.transformed_poses[index]
+
+        if self.load_embeddings: # False
+            embedding = self.read_embedding_from_file(self.embedding_paths[index])
             return (
-                torch.from_numpy(left).to(self.device).type(self.dtype),
-                torch.from_numpy(right).to(self.device).type(self.dtype),
+                color.to(self.device).type(self.dtype),
+                depth.to(self.device).type(self.dtype),
                 intrinsics.to(self.device).type(self.dtype),
                 pose.to(self.device).type(self.dtype),
-                objects.to(self.device).type(self.dtype) if objects is not None else None,
+                objects.to(self.device).type(self.dtype),
+                embedding.to(self.device),  # Allow embedding to be another dtype
             )
-        
-        else:
-            color_path = self.color_paths[index]
-            depth_path = self.depth_paths[index]
-            
-            color = np.asarray(imageio.imread(color_path), dtype=float)
-            color = self._preprocess_color(color)
 
-            object_path = self.object_paths[index]
-            objects = np.asarray(cv2.imread(object_path, cv2.IMREAD_UNCHANGED)).astype(np.uint8) if os.path.exists(object_path) else None
-            objects = self._preprocess_objects(objects)
-            objects = torch.from_numpy(objects)
-
-            if ".png" in depth_path:
-                # depth_data = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
-                depth = np.asarray(imageio.imread(depth_path), dtype=np.int64)
-            elif ".exr" in depth_path:
-                print("Error depth format!!!")
-                # depth = readEXR_onlydepth(depth_path)
-
-            K = as_intrinsics_matrix([self.fx, self.fy, self.cx, self.cy])
-            if self.distortion is not None:
-                # undistortion is only applied on color image, not depth!
-                color = cv2.undistort(color, K, self.distortion)
-
-            color = torch.from_numpy(color)
-            K = torch.from_numpy(K)
-
-            depth = self._preprocess_depth(depth)
-            depth = torch.from_numpy(depth)
-
-            K = datautils.scale_intrinsics(K, self.height_downsample_ratio, self.width_downsample_ratio)
-            intrinsics = torch.eye(4).to(K)
-            intrinsics[:3, :3] = K
-
-            pose = self.transformed_poses[index]
-
-            if self.load_embeddings: # False
-                embedding = self.read_embedding_from_file(self.embedding_paths[index])
-                return (
-                    color.to(self.device).type(self.dtype),
-                    depth.to(self.device).type(self.dtype),
-                    intrinsics.to(self.device).type(self.dtype),
-                    pose.to(self.device).type(self.dtype),
-                    objects.to(self.device).type(self.dtype),
-                    embedding.to(self.device),  # Allow embedding to be another dtype
-                )
-
-            return (
-                    color.to(self.device).type(self.dtype),
-                    depth.to(self.device).type(self.dtype),
-                    intrinsics.to(self.device).type(self.dtype),
-                    pose.to(self.device).type(self.dtype),
-                    objects.to(self.device).type(self.dtype)
-                )
+        return (
+                color.to(self.device).type(self.dtype),
+                depth.to(self.device).type(self.dtype),
+                intrinsics.to(self.device).type(self.dtype),
+                pose.to(self.device).type(self.dtype),
+                objects.to(self.device).type(self.dtype)
+            )
         
        

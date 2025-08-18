@@ -186,6 +186,63 @@ def initialize_first_timestep(dataset, num_frames, scene_radius_depth_ratio, mea
     variables['scene_radius'] = torch.max(depth) / scene_radius_depth_ratio
 
     return params, variables, intrinsics, w2c, cam
+
+def initialize_first_timestep_stereo(dataset, num_frames, scene_radius_depth_ratio, mean_sq_dist_method, baseline, densify_dataset=None, gaussian_distribution=None, num_objects=16):
+    color, color_right, intrinsics, pose, gt_objects = dataset[0]
+
+    color = color.permute(2, 0, 1) / 255  # (H, W, C) -> (C, H, W)
+    color_right = color_right.permute(2, 0, 1) / 255  # (H, W, C) -> (C, H, W)
+
+    # Process Camera Parameters
+    intrinsics = intrinsics[:3, :3]
+    w2c = torch.linalg.inv(pose)
+
+    # Depth estimation
+    left_np = (color.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+    right_np = (color_right.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+    grayL = cv2.cvtColor(left_np, cv2.COLOR_RGB2GRAY)
+    grayR = cv2.cvtColor(right_np, cv2.COLOR_RGB2GRAY)
+
+    # StereoBM / StereoSGBM
+    stereo = cv2.StereoSGBM_create(
+        minDisparity=0,
+        numDisparities=96,   # 要求16的倍数
+        blockSize=5,
+        P1=8 * 3 * 5 ** 2,
+        P2=32 * 3 * 5 ** 2,
+        disp12MaxDiff=1,
+        uniquenessRatio=10,
+        speckleWindowSize=100,
+        speckleRange=32
+    )
+    disparity = stereo.compute(grayL, grayR).astype(np.float32) / 16.0
+
+    # disparity -> depth
+    fx = intrinsics[0, 0].item()
+    depth_np = np.zeros_like(disparity, dtype=np.float32)
+    valid = disparity > 0
+    depth_np[valid] = fx * baseline / (disparity[valid] + 1e-6)
+
+    depth = torch.from_numpy(depth_np).unsqueeze(-1)    # PyTorch (H, W, 1)
+    depth = depth.to(color.device)
+
+    # Setup Camera
+    cam = get_rasterizationSettings(color.shape[2], color.shape[1], intrinsics.cpu().numpy(), w2c.detach().cpu().numpy())
+
+    mask = (depth > 0).reshape(-1)
+    init_pt_cld, mean3_sq_dist = get_pointcloud(
+        color, depth, intrinsics, w2c,
+        mask=mask, compute_mean_sq_dist=True,
+        mean_sq_dist_method=mean_sq_dist_method
+    )
+
+    # Initialize Parameters
+    params, variables = initialize_params(init_pt_cld, num_frames, mean3_sq_dist, gaussian_distribution, num_objects)
+
+    # Initialize an estimate of scene radius for Gaussian-Splatting Densification
+    variables['scene_radius'] = torch.max(depth) / scene_radius_depth_ratio
+
+    return params, variables, intrinsics, w2c, cam
     
 def initialize_new_params(new_pt_cld, mean3_sq_dist, gaussian_distribution, num_objects=16):
     """
