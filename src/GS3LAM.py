@@ -22,6 +22,7 @@ from src.Decoder import SemanticDecoder
 from src.utils.logger import report_progress, save_params_ckpt, save_params
 from src.utils.gaussian_utils import matrix_to_quaternion, build_rotation
 from src.utils.common_utils import seed_everything
+from src.LoopClosure import loop_closure
 
 def run_gs3lam(config: dict):
     seed_everything(seed=config['seed'])
@@ -250,6 +251,30 @@ def run_gs3lam(config: dict):
                 ckpt_output_dir = os.path.join(config["workdir"], config["run_name"])
                 save_params_ckpt(params, ckpt_output_dir, time_idx)
                 print('Failed to evaluate trajectory.')
+
+        #####################################################
+        ###             Local Loop closure                ###
+        #####################################################
+
+        if config['loop_closure']['use_loop_closure'] and time_idx > 0 and (time_idx+1) % config['loop_closure']['loop_closure_every'] == 0:
+            # Loop Closure
+            print(f"Loop Closure at Time Step: {time_idx}")
+
+            # # 保存当前子图
+            # save_current_submap()
+            # # 更新回环检测信息
+            # update_submaps_info()
+            # 闭环检测
+            lc_output = loop_closure(keyframe_list)
+            # # 校正位姿
+            # if len(lc_output) > 0:
+            #     submaps_kf_ids = apply_correction_to_submaps(lc_output)
+            #     update_keyframe_poses(lc_output, submaps_kf_ids, frame_id)
+            # # 保存位姿数据
+            # save_dict_to_ckpt(estimated_c2ws[:frame_id + 1])
+            # # 创建新子地图
+            # gaussian_model = self.start_new_submap(frame_id, gaussian_model)
+
 
         #####################################################
         ###                 Mapping                       ###
