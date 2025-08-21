@@ -8,4 +8,4 @@ camera_params:
   cy: 317.752196
   crop_edge: 0
   png_depth_scale: 256.0
-  baseline: 0.54
+  baseline: 0.60
