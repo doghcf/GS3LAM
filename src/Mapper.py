@@ -64,6 +64,9 @@ def get_pointcloud(color, depth, intrinsics, w2c, transform_pts=True,
     xx = xx.reshape(-1)
     yy = yy.reshape(-1)
     depth_z = depth[0].reshape(-1)
+    if depth_z.shape[0] != xx.shape[0]:
+        # 兼容 (H, W, 1) 或 (H, W) 的情况
+        depth_z = depth.squeeze().reshape(-1)
 
     # points in camera coordinates
     pts_cam = torch.stack((xx * depth_z, yy * depth_z, depth_z), dim=-1)

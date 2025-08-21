@@ -21,6 +21,7 @@ class TUMSemanticDataset(GradSLAMDataset):
         embedding_dim: Optional[int] = 512,
         **kwargs,
     ):
+        print("Load TUM dataset!!!")
         self.input_folder = os.path.join(basedir, sequence)
         self.pose_path = None
         super().__init__(

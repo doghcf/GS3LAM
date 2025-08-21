@@ -2,9 +2,9 @@ from datetime import datetime
 
 primary_device="cuda:0"
 seed = 1
-scene_name = "00"
+scene_name = "2013_05_28_drive_0003_sync"
 
-basedir = "./data/KITTI-DEVA"
+basedir = "./data/KITTI-360"
 
 # General Settings
 first_frame_mapping_iters = 1000
@@ -46,10 +46,10 @@ config = dict(
         basedir=basedir,
         gradslam_data_cfg=f"./configs/camera/KITTI/{scene_name}.yaml",
         sequence=scene_name,
-        desired_image_height=480,
-        desired_image_width=640,
-        start=0,
-        end=end_frame,
+        desired_image_height=376,
+        desired_image_width=1408,
+        start=10,
+        end=700,
         stride=1,
         num_frames=-1,
         use_stereo=True, # Use Stereo Images

@@ -147,7 +147,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         
         self.color_paths = self.color_paths[self.start : self.end : stride]
         if self.load_stereo:
-            self.right_paths = self.right_paths[self.start : self.end : stride]
+            self.color_paths_right = self.color_paths_right[self.start : self.end : stride]
         else:
             self.depth_paths = self.depth_paths[self.start : self.end : stride]
         self.object_paths = self.object_paths[self.start : self.end : stride]
@@ -274,7 +274,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         if self.load_stereo:
             left = np.asarray(imageio.imread(self.color_paths[index]), dtype=float)
-            right = np.asarray(imageio.imread(self.right_paths[index]), dtype=float)
+            right = np.asarray(imageio.imread(self.color_paths_right[index]), dtype=float)
             left = self._preprocess_color(left)
             right = self._preprocess_color(right)
 
@@ -312,7 +312,6 @@ class GradSLAMDataset(torch.utils.data.Dataset):
                 pose.to(self.device).type(self.dtype),
                 objects.to(self.device).type(self.dtype) if objects is not None else None,
             )
-        
         else:
             color_path = self.color_paths[index]
             depth_path = self.depth_paths[index]

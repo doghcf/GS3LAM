@@ -25,7 +25,7 @@ class KITTISemanticDataset(GradSLAMDataset):
     ):
         print("Load KITTI dataset!!!")
         self.input_folder = os.path.join(basedir, sequence)
-        self.pose_path = None
+        self.pose_path = os.path.join(self.input_folder, "poses.txt")
         super().__init__(
             config_dict,
             stride=stride,
@@ -41,9 +41,9 @@ class KITTISemanticDataset(GradSLAMDataset):
         )
 
     def get_filepaths(self):
-        left_color_paths = sorted(glob.glob(f"{self.input_folder}/image_0/*.png"))
-        right_color_paths = sorted(glob.glob(f"{self.input_folder}/image_1/*.png"))
-        object_paths = sorted(glob.glob(f"{self.input_folder}/semantic/*.png"))
+        left_color_paths = sorted(glob.glob(f"{self.input_folder}/image_00/data_rect/*.png"))
+        right_color_paths = sorted(glob.glob(f"{self.input_folder}/image_01/data_rect/*.png"))
+        object_paths = sorted(glob.glob(f"{self.input_folder}/object_mask_00/*.png"))
         
         embedding_paths = None
         if self.load_embeddings:
@@ -55,7 +55,6 @@ class KITTISemanticDataset(GradSLAMDataset):
         poses = []
         with open(self.pose_path, "r") as f:
             lines = f.readlines()
-        
         for i in range(self.num_imgs):
             line = lines[i]
             c2w = np.array(list(map(float, line.split()))).reshape(3, 4)

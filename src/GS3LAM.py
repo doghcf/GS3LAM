@@ -25,6 +25,17 @@ from src.utils.gaussian_utils import matrix_to_quaternion, build_rotation
 from src.utils.common_utils import seed_everything
 from src.LoopClosure import loop_closure
 
+def tensor_to_cv_img(tensor):
+    """将 (C,H,W) 或 (H,W,C) 的 torch.Tensor 转为 (H,W,C) 的 np.uint8"""
+    if tensor.ndim == 3 and tensor.shape[0] == 3:
+        img = tensor.permute(1, 2, 0).cpu().numpy()
+    elif tensor.ndim == 3 and tensor.shape[2] == 3:
+        img = tensor.cpu().numpy()
+    else:
+        img = tensor.cpu().numpy()
+    img = (img * 255).astype(np.uint8)
+    return img
+
 def run_gs3lam(config: dict):
     seed_everything(seed=config['seed'])
 
@@ -126,13 +137,34 @@ def run_gs3lam(config: dict):
             gt_w2c = torch.linalg.inv(gt_pose)
             # Process RGB-D Data
             color = color.permute(2, 0, 1) / 255 # BGR->RGB
-            color_right = color.permute(2, 0, 1) / 255 # BGR->RGB
+            color_right = color_right.permute(2, 0, 1) / 255 # BGR->RGB
 
             # ---- Stereo disparity → depth ----
-            left_np = (color.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
-            right_np = (color_right.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
-            grayL = cv2.cvtColor(left_np, cv2.COLOR_RGB2GRAY)
-            grayR = cv2.cvtColor(right_np, cv2.COLOR_RGB2GRAY)
+            left_np = tensor_to_cv_img(color)
+            right_np = tensor_to_cv_img(color_right)
+
+            if left_np.ndim == 3 and left_np.shape[2] == 3:
+                grayL = cv2.cvtColor(left_np, cv2.COLOR_RGB2GRAY)
+            else:
+                grayL = left_np.squeeze()
+            if right_np.ndim == 3 and right_np.shape[2] == 3:
+                grayR = cv2.cvtColor(right_np, cv2.COLOR_RGB2GRAY)
+            else:
+                grayR = right_np.squeeze()
+
+            # 保证灰度图为二维、uint8且shape一致
+            grayL = np.ascontiguousarray(grayL)
+            grayR = np.ascontiguousarray(grayR)
+            if grayL.ndim == 3:
+                grayL = grayL.squeeze()
+            if grayR.ndim == 3:
+                grayR = grayR.squeeze()
+            if grayL.dtype != np.uint8:
+                grayL = grayL.astype(np.uint8)
+            if grayR.dtype != np.uint8:
+                grayR = grayR.astype(np.uint8)
+            if grayL.shape != grayR.shape:
+                raise ValueError(f"Stereo images shape mismatch: {grayL.shape} vs {grayR.shape}")
 
             stereo = cv2.StereoSGBM_create(
                 minDisparity=0,
@@ -312,16 +344,16 @@ def run_gs3lam(config: dict):
         ###             Local Loop closure                ###
         #####################################################
 
-        if config['loop_closure']['use_loop_closure'] and time_idx > 0 and (time_idx+1) % config['loop_closure']['loop_closure_every'] == 0:
-            # Loop Closure
-            print(f"Loop Closure at Time Step: {time_idx}")
+        # if config['loop_closure']['use_loop_closure'] and time_idx > 0 and (time_idx+1) % config['loop_closure']['loop_closure_every'] == 0:
+        #     # Loop Closure
+        #     print(f"Loop Closure at Time Step: {time_idx}")
 
             # # 保存当前子图
             # save_current_submap()
             # # 更新回环检测信息
             # update_submaps_info()
             # 闭环检测
-            lc_output = loop_closure(keyframe_list)
+            # lc_output = loop_closure(keyframe_list)
             # # 校正位姿
             # if len(lc_output) > 0:
             #     submaps_kf_ids = apply_correction_to_submaps(lc_output)
