@@ -25,7 +25,7 @@ class KITTISemanticDataset(GradSLAMDataset):
     ):
         print("Load KITTI dataset!!!")
         self.input_folder = os.path.join(basedir, sequence)
-        self.pose_path = os.path.join(self.input_folder, "poses.txt")
+        self.pose_path = os.path.join(self.input_folder, "cam0_to_world.txt")
         super().__init__(
             config_dict,
             stride=stride,
@@ -52,14 +52,14 @@ class KITTISemanticDataset(GradSLAMDataset):
         return left_color_paths, right_color_paths, object_paths, embedding_paths
 
     def load_poses(self):
-        poses = []
+        poses = [torch.eye(4) for _ in range(self.num_imgs)]
         with open(self.pose_path, "r") as f:
             lines = f.readlines()
-        for i in range(self.num_imgs):
-            line = lines[i]
-            c2w = np.array(list(map(float, line.split()))).reshape(3, 4)
-            c2w = np.vstack((c2w, [0, 0, 0, 1]))  # Convert to 4x4 matrix
+        for line in lines:
+            elems = line.split()
+            idx = int(elems[0])
+            c2w = np.array(list(map(float, elems[1:17]))).reshape(4, 4)
             c2w = torch.from_numpy(c2w).float()
-            poses.append(c2w)
+            poses[idx] = c2w
         
         return poses

@@ -84,7 +84,7 @@ def run_gs3lam(config: dict):
         num_frames = len(dataset)
 
     # Initialize Parameters & Canoncial Camera parameters
-    if dataset_config["use_stereo"]:
+    if "use_stereo" in dataset_config and dataset_config["use_stereo"]:
         params, variables, intrinsics, first_frame_w2c, cam = initialize_first_timestep_stereo(
             dataset, num_frames, config['scene_radius_depth_ratio'],
             config['mean_sq_dist_method'], gradslam_data_cfg['camera_params']['baseline'],
@@ -130,12 +130,12 @@ def run_gs3lam(config: dict):
         #####################################################
         ###                 Data Reader                   ###
         #####################################################
-        if dataset_config["use_stereo"]:
+        if "use_stereo" in dataset_config and dataset_config["use_stereo"]:
             color, color_right, _, gt_pose, gt_objects = dataset[time_idx]
 
             # Process poses
             gt_w2c = torch.linalg.inv(gt_pose)
-            # Process RGB-D Data
+            # Process RGB Data
             color = color.permute(2, 0, 1) / 255 # BGR->RGB
             color_right = color_right.permute(2, 0, 1) / 255 # BGR->RGB
 
@@ -186,6 +186,7 @@ def run_gs3lam(config: dict):
             depth_np[valid] = fx * baseline / (disparity[valid] + 1e-6)
 
             depth = torch.from_numpy(depth_np).unsqueeze(0).to(color.device)  # (1,H,W)
+            print(f"depth range: {depth.min().item():.4f} ~ {depth.max().item():.4f}, valid ratio: {valid.sum()/valid.size:.4f}")
             
             gt_w2c_all_frames.append(gt_w2c)
             curr_gt_w2c = gt_w2c_all_frames
@@ -196,8 +197,6 @@ def run_gs3lam(config: dict):
             curr_data = {'cam': cam, 'im': color, 'depth': depth, 'obj': gt_objects, 
                         'id': iter_time_idx, 'intrinsics': intrinsics, 
                         'w2c': first_frame_w2c, 'iter_gt_w2c_list': curr_gt_w2c}
-
-
         else:
             # Load RGBD frames incrementally instead of all frames
             color, depth, _, gt_pose, gt_objects = dataset[time_idx]
@@ -216,7 +215,6 @@ def run_gs3lam(config: dict):
             curr_data = {'cam': cam, 'im': color, 'depth': depth, 'obj': gt_objects, 
                         'id': iter_time_idx, 'intrinsics': intrinsics, 
                         'w2c': first_frame_w2c, 'iter_gt_w2c_list': curr_gt_w2c}
-
 
         #####################################################
         ###                 Tracking                      ###
@@ -574,6 +572,7 @@ def run_gs3lam(config: dict):
                 add_new_gaussians=config['mapping']['add_new_gaussians'],
                 eval_every=config['eval_every'],
                 use_semantic=config["use_semantic"],
+                load_stereo=config["data"]["use_stereo"],
                 classifier=semantic_decoder if config["use_semantic"] else None)
 
     # Add Camera Parameters to Save them
