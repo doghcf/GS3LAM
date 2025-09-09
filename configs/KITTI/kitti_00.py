@@ -14,7 +14,7 @@ opt_rskm_interval = 5
 densify_thres = 0.5 # For Addition of new Gaussians
 end_frame = -1
 
-use_semantic_for_mapping = True
+use_semantic_for_mapping = False
 
 map_every = 1 # add Gaussians
 keyframe_every = 5
@@ -49,12 +49,12 @@ config = dict(
         desired_image_height=376,
         desired_image_width=1408,
         start=10,
-        end=700,
+        end=20,
         stride=1,
         num_frames=-1,
         use_stereo=True, # Use Stereo Images
     ),
-    use_semantic=True,
+    use_semantic=False,
     semantic=dict(
         use_pretrain=False,
         pretrain_path="./pretrain",
@@ -63,7 +63,7 @@ config = dict(
     ),
     tracking=dict(
         use_gt_poses=False, # Use GT Poses for Tracking
-        use_semantic_for_tracking=True,
+        use_semantic_for_tracking=False,
         forward_prop=True, # Forward Propagate Poses
         num_iters=tracking_iters,
         use_alpha_for_loss=True,
@@ -101,7 +101,7 @@ config = dict(
         first_frame_mapping_iters=first_frame_mapping_iters,
         add_new_gaussians=True,
         densify_thres=densify_thres, # For Addition of new Gaussians
-        use_semantic_for_mapping=True,
+        use_semantic_for_mapping=False,
         opt_rskm_interval=opt_rskm_interval,
         use_l1=True,
         ignore_outlier_depth_loss=True,

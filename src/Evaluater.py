@@ -70,7 +70,7 @@ def visualize_obj(objects):
     return rgb_mask
 
 def eval(dataset, final_params, num_frames, eval_dir,
-         mapping_iters, add_new_gaussians, wandb_run=None, wandb_save_qual=False, eval_every=1, save_frames=False, use_semantic=False, classifier=None):
+         mapping_iters, add_new_gaussians, wandb_run=None, wandb_save_qual=False, eval_every=1, save_frames=False, use_semantic=False, load_stereo=False, classifier=None):
     print("Evaluating Final Parameters ...")
     psnr_list = []
     rmse_list = []
@@ -114,7 +114,9 @@ def eval(dataset, final_params, num_frames, eval_dir,
     iter_end = torch.cuda.Event(enable_timing=True)
     for time_idx in tqdm(range(num_frames)):
          # Get RGB-D Data & Camera Parameters
-        if use_semantic:
+        if load_stereo:
+            color, color_right, intrinsics, pose, gt_objects = dataset[time_idx]
+        elif use_semantic:
             color, depth, intrinsics, pose, gt_objects = dataset[time_idx]
         else:
             color, depth, intrinsics, pose = dataset[time_idx]
@@ -124,8 +126,12 @@ def eval(dataset, final_params, num_frames, eval_dir,
         intrinsics = intrinsics[:3, :3]
 
         # Process RGB-D Data
-        color = color.permute(2, 0, 1) / 255 # (H, W, C) -> (C, H, W)
-        depth = depth.permute(2, 0, 1) # (H, W, C) -> (C, H, W)
+        if load_stereo:
+            color = color.permute(2, 0, 1) / 255
+            color_right = color_right.permute(2, 0, 1) / 255
+        else:
+            color = color.permute(2, 0, 1) / 255 # (H, W, C) -> (C, H, W)
+            depth = depth.permute(2, 0, 1) # (H, W, C) -> (C, H, W)
 
         if time_idx == 0:
             # Process Camera Parameters
@@ -143,7 +149,9 @@ def eval(dataset, final_params, num_frames, eval_dir,
                                              camera_grad=False)
  
         # Define current frame data
-        if use_semantic:
+        if load_stereo:
+            curr_data = {'cam': cam, 'im': color, 'im_right': color_right, "obj": gt_objects, 'id': time_idx, 'intrinsics': intrinsics, 'w2c': first_frame_w2c}
+        elif use_semantic:
             curr_data = {'cam': cam, 'im': color, 'depth': depth, "obj": gt_objects, 'id': time_idx, 'intrinsics': intrinsics, 'w2c': first_frame_w2c}
         else:
             curr_data = {'cam': cam, 'im': color, 'depth': depth, 'id': time_idx, 'intrinsics': intrinsics, 'w2c': first_frame_w2c}
