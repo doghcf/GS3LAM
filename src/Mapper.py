@@ -191,43 +191,17 @@ def initialize_first_timestep(dataset, num_frames, scene_radius_depth_ratio, mea
     return params, variables, intrinsics, w2c, cam
 
 def initialize_first_timestep_stereo(dataset, num_frames, scene_radius_depth_ratio, mean_sq_dist_method, baseline, densify_dataset=None, gaussian_distribution=None, num_objects=16):
+    # Get Data & Camera Parameters
     color, color_right, depth, depth_right, intrinsics, pose, gt_objects, gt_objects_right = dataset[0]
 
     color = color.permute(2, 0, 1) / 255  # (H, W, C) -> (C, H, W)
     color_right = color_right.permute(2, 0, 1) / 255  # (H, W, C) -> (C, H, W)
+    depth = depth.permute(2, 0, 1)
+    depth_right = depth_right.permute(2, 0, 1)
 
     # Process Camera Parameters
     intrinsics = intrinsics[:3, :3]
     w2c = torch.linalg.inv(pose)
-
-    # Depth estimation
-    left_np = (color.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
-    right_np = (color_right.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
-    grayL = cv2.cvtColor(left_np, cv2.COLOR_RGB2GRAY)
-    grayR = cv2.cvtColor(right_np, cv2.COLOR_RGB2GRAY)
-
-    # StereoBM / StereoSGBM
-    stereo = cv2.StereoSGBM_create(
-        minDisparity=0,
-        numDisparities=96,   # 要求16的倍数
-        blockSize=5,
-        P1=8 * 3 * 5 ** 2,
-        P2=32 * 3 * 5 ** 2,
-        disp12MaxDiff=1,
-        uniquenessRatio=10,
-        speckleWindowSize=100,
-        speckleRange=32
-    )
-    disparity = stereo.compute(grayL, grayR).astype(np.float32) / 16.0
-
-    # disparity -> depth
-    fx = intrinsics[0, 0].item()
-    depth_np = np.zeros_like(disparity, dtype=np.float32)
-    valid = disparity > 0
-    depth_np[valid] = fx * baseline / (disparity[valid] + 1e-6)
-
-    depth = torch.from_numpy(depth_np).unsqueeze(-1)    # PyTorch (H, W, 1)
-    depth = depth.to(color.device)
 
     # Setup Camera
     cam = get_rasterizationSettings(color.shape[2], color.shape[1], intrinsics.cpu().numpy(), w2c.detach().cpu().numpy())

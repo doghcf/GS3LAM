@@ -14,18 +14,18 @@ basedir = "/home/fu/data/TartanAir"
 
 # General Settings
 first_frame_mapping_iters = 1000
-tracking_iters = 360
-mapping_iters = 150
+tracking_iters = 40
+mapping_iters = 60
 opt_rskm_interval=5
-densify_thres=0.5 # For Addition of new Gaussians
-end_frame = -1
+densify_thres=0.1 # For Addition of new Gaussians
+end_frame = 2
 
 # mapping
 use_semantic_for_mapping=True
 
 map_every = 1 # add Gaussians
 keyframe_every = 5
-mapping_window_size = 20
+mapping_window_size = 24
 
 config = dict(
     workdir=f"./logs/{group_name}/{scene_name}_seed{seed}",
@@ -35,9 +35,9 @@ config = dict(
     map_every=map_every, # Mapping every nth frame
     keyframe_every=keyframe_every, # Keyframe every nth frame
     mapping_window_size=mapping_window_size, # Mapping window size
-    report_global_progress_every=25, # Report Global Progress every nth frame
+    report_global_progress_every=100, # Report Global Progress every nth frame
     eval_every=5, # Evaluate every nth frame (at end of SLAM)
-    scene_radius_depth_ratio=2, # (Meters) Max First Frame Depth to Scene Radius Ratio (For Pruning/Densification)
+    scene_radius_depth_ratio=3, # (Meters) Max First Frame Depth to Scene Radius Ratio (For Pruning/Densification)
     mean_sq_dist_method="projective", # ["projective", "knn"] (Type of Mean Squared Distance Calculation for Scale of Gaussians)
     gaussian_distribution="isotropic", # ["isotropic", "anisotropic"] (Isotropic -> Spherical Covariance, Anisotropic -> Ellipsoidal Covariance)
     densify_method="alpha", # ['depth_sil', 'alpha']
