@@ -191,7 +191,7 @@ def initialize_first_timestep(dataset, num_frames, scene_radius_depth_ratio, mea
     return params, variables, intrinsics, w2c, cam
 
 def initialize_first_timestep_stereo(dataset, num_frames, scene_radius_depth_ratio, mean_sq_dist_method, baseline, densify_dataset=None, gaussian_distribution=None, num_objects=16):
-    color, color_right, intrinsics, pose, gt_objects = dataset[0]
+    color, color_right, depth, depth_right, intrinsics, pose, gt_objects, gt_objects_right = dataset[0]
 
     color = color.permute(2, 0, 1) / 255  # (H, W, C) -> (C, H, W)
     color_right = color_right.permute(2, 0, 1) / 255  # (H, W, C) -> (C, H, W)

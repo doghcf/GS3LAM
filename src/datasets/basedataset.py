@@ -128,7 +128,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             self.crop_edge = config_dict["camera_params"]["crop_edge"]
 
         if self.load_stereo:
-            self.color_paths, self.color_paths_right, self.object_paths, self.embedding_paths = self.get_filepaths()
+            self.color_paths, self.color_paths_right, self.depth_paths, self.depth_paths_right,self.object_paths, self.object_paths_right, self.embedding_paths = self.get_filepaths()
             if len(self.color_paths) != len(self.color_paths_right):
                 raise ValueError("Number of left and right images must be the same.")
         else:
@@ -273,45 +273,76 @@ class GradSLAMDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         if self.load_stereo:
-            left = np.asarray(imageio.imread(self.color_paths[index]), dtype=float)
-            right = np.asarray(imageio.imread(self.color_paths_right[index]), dtype=float)
+            color_path = self.color_paths[index]
+            color_path_right = self.color_paths_right[index]
+            depth_path = self.depth_paths[index]
+            depth_path_right = self.depth_paths_right[index]
+            object_path = self.object_paths[index]
+            object_path_right = self.object_paths_right[index]
+
+            left = np.asarray(imageio.imread(color_path), dtype=float)
+            right = np.asarray(imageio.imread(color_path_right), dtype=float)
             left = self._preprocess_color(left)
             right = self._preprocess_color(right)
 
-            objects = None
-            if self.object_paths is not None and os.path.exists(self.object_paths[index]):
-                objects = np.asarray(cv2.imread(self.object_paths[index], cv2.IMREAD_UNCHANGED)).astype(np.uint8)
-                objects = self._preprocess_objects(objects)
-                objects = torch.from_numpy(objects)
+            if ".png" in depth_path:
+                depth = np.asarray(imageio.imread(depth_path), dtype=np.int64)
+                depth_right = np.asarray(imageio.imread(depth_path_right), dtype=np.int64)
+            elif ".npy" in depth_path:
+                depth = np.load(depth_path)
+                depth_right = np.load(depth_path_right)
+            else:
+                print("Error depth format!!!")
+            depth = self._preprocess_depth(depth)
+            depth_right = self._preprocess_depth(depth_right)
+
+            objects = np.load(object_path)
+            objects_right = np.load(object_path_right)
+            objects = torch.from_numpy(objects)
+            objects_right = torch.from_numpy(objects_right)
 
             K = as_intrinsics_matrix([self.fx, self.fy, self.cx, self.cy])
             if self.distortion is not None:
+                # undistortion is only applied on color image, not depth!
                 left = cv2.undistort(left, K, self.distortion)
                 right = cv2.undistort(right, K, self.distortion)
-            K = datautils.scale_intrinsics(torch.from_numpy(K), self.height_downsample_ratio, self.width_downsample_ratio)
+
+            left = torch.from_numpy(left)
+            right = torch.from_numpy(right)
+            K = torch.from_numpy(K)
+            depth = torch.from_numpy(depth)
+            depth_right = torch.from_numpy(depth_right)
+            
+            K = datautils.scale_intrinsics(K, self.height_downsample_ratio, self.width_downsample_ratio)
             intrinsics = torch.eye(4).to(K)
             intrinsics[:3, :3] = K
 
             pose = self.transformed_poses[index]
-
-            if self.load_embeddings:
+            if self.load_embeddings: # False
                 embedding = self.read_embedding_from_file(self.embedding_paths[index])
                 return (
-                    torch.from_numpy(left).to(self.device).type(self.dtype),
-                    torch.from_numpy(right).to(self.device).type(self.dtype),
+                    left.to(self.device).type(self.dtype),
+                    right.to(self.device).type(self.dtype),
+                    depth.to(self.device).type(self.dtype),
+                    depth_right.to(self.device).type(self.dtype),
                     intrinsics.to(self.device).type(self.dtype),
                     pose.to(self.device).type(self.dtype),
-                    objects.to(self.device).type(self.dtype) if objects is not None else None,
-                    embedding.to(self.device),
+                    objects.to(self.device).type(self.dtype),
+                    objects_right.to(self.device).type(self.dtype),
+                    embedding.to(self.device),  # Allow embedding to be another dtype
                 )
 
             return (
-                torch.from_numpy(left).to(self.device).type(self.dtype),
-                torch.from_numpy(right).to(self.device).type(self.dtype),
-                intrinsics.to(self.device).type(self.dtype),
-                pose.to(self.device).type(self.dtype),
-                objects.to(self.device).type(self.dtype) if objects is not None else None,
-            )
+                    left.to(self.device).type(self.dtype),
+                    right.to(self.device).type(self.dtype),
+                    depth.to(self.device).type(self.dtype),
+                    depth_right.to(self.device).type(self.dtype),
+                    intrinsics.to(self.device).type(self.dtype),
+                    pose.to(self.device).type(self.dtype),
+                    objects.to(self.device).type(self.dtype),
+                    objects_right.to(self.device).type(self.dtype)
+                )
+
         else:
             color_path = self.color_paths[index]
             depth_path = self.depth_paths[index]

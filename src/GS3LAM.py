@@ -25,17 +25,6 @@ from src.utils.gaussian_utils import matrix_to_quaternion, build_rotation
 from src.utils.common_utils import seed_everything
 from src.LoopClosure import loop_closure
 
-def tensor_to_cv_img(tensor):
-    """将 (C,H,W) 或 (H,W,C) 的 torch.Tensor 转为 (H,W,C) 的 np.uint8"""
-    if tensor.ndim == 3 and tensor.shape[0] == 3:
-        img = tensor.permute(1, 2, 0).cpu().numpy()
-    elif tensor.ndim == 3 and tensor.shape[2] == 3:
-        img = tensor.cpu().numpy()
-    else:
-        img = tensor.cpu().numpy()
-    img = (img * 255).astype(np.uint8)
-    return img
-
 def run_gs3lam(config: dict):
     seed_everything(seed=config['seed'])
 
@@ -131,72 +120,26 @@ def run_gs3lam(config: dict):
         ###                 Data Reader                   ###
         #####################################################
         if "use_stereo" in dataset_config and dataset_config["use_stereo"]:
-            color, color_right, _, gt_pose, gt_objects = dataset[time_idx]
+            color, color_right, depth, depth_right, _, gt_pose, gt_objects, gt_objects_right = dataset[time_idx]
 
             # Process poses
             gt_w2c = torch.linalg.inv(gt_pose)
             # Process RGB Data
             color = color.permute(2, 0, 1) / 255 # BGR->RGB
             color_right = color_right.permute(2, 0, 1) / 255 # BGR->RGB
-
-            # ---- Stereo disparity → depth ----
-            left_np = tensor_to_cv_img(color)
-            right_np = tensor_to_cv_img(color_right)
-
-            if left_np.ndim == 3 and left_np.shape[2] == 3:
-                grayL = cv2.cvtColor(left_np, cv2.COLOR_RGB2GRAY)
-            else:
-                grayL = left_np.squeeze()
-            if right_np.ndim == 3 and right_np.shape[2] == 3:
-                grayR = cv2.cvtColor(right_np, cv2.COLOR_RGB2GRAY)
-            else:
-                grayR = right_np.squeeze()
-
-            # 保证灰度图为二维、uint8且shape一致
-            grayL = np.ascontiguousarray(grayL)
-            grayR = np.ascontiguousarray(grayR)
-            if grayL.ndim == 3:
-                grayL = grayL.squeeze()
-            if grayR.ndim == 3:
-                grayR = grayR.squeeze()
-            if grayL.dtype != np.uint8:
-                grayL = grayL.astype(np.uint8)
-            if grayR.dtype != np.uint8:
-                grayR = grayR.astype(np.uint8)
-            if grayL.shape != grayR.shape:
-                raise ValueError(f"Stereo images shape mismatch: {grayL.shape} vs {grayR.shape}")
-
-            stereo = cv2.StereoSGBM_create(
-                minDisparity=0,
-                numDisparities=96,   # 16的倍数
-                blockSize=5,
-                P1=8 * 3 * 5 ** 2,
-                P2=32 * 3 * 5 ** 2,
-                disp12MaxDiff=1,
-                uniquenessRatio=10,
-                speckleWindowSize=100,
-                speckleRange=32
-            )
-            disparity = stereo.compute(grayL, grayR).astype(np.float32) / 16.0
-
-            fx = intrinsics[0, 0].item()
-            baseline = gradslam_data_cfg['camera_params']['baseline']
-            depth_np = np.zeros_like(disparity, dtype=np.float32)
-            valid = disparity > 0
-            depth_np[valid] = fx * baseline / (disparity[valid] + 1e-6)
-
-            depth = torch.from_numpy(depth_np).unsqueeze(0).to(color.device)  # (1,H,W)
-            print(f"depth range: {depth.min().item():.4f} ~ {depth.max().item():.4f}, valid ratio: {valid.sum()/valid.size:.4f}")
-            
+            depth = depth.permute(2, 0, 1)
+            depth_right = depth_right.permute(2, 0, 1)
             gt_w2c_all_frames.append(gt_w2c)
             curr_gt_w2c = gt_w2c_all_frames
 
             # Optimize only current time step for tracking
             iter_time_idx = time_idx
             # Initialize Mapping Data for selected frame
-            curr_data = {'cam': cam, 'im': color, 'depth': depth, 'obj': gt_objects, 
-                        'id': iter_time_idx, 'intrinsics': intrinsics, 
-                        'w2c': first_frame_w2c, 'iter_gt_w2c_list': curr_gt_w2c}
+            curr_data = {'cam': cam, 'im': color, 'im_right': color_right,
+                         'depth': depth, 'depth_right': depth_right,
+                         'obj': gt_objects, 'obj_right': gt_objects_right,
+                         'id': iter_time_idx, 'intrinsics': intrinsics,
+                         'w2c': first_frame_w2c, 'iter_gt_w2c_list': curr_gt_w2c}
         else:
             # Load RGBD frames incrementally instead of all frames
             color, depth, _, gt_pose, gt_objects = dataset[time_idx]

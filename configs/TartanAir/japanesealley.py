@@ -1,27 +1,31 @@
 from datetime import datetime
 
 primary_device="cuda:0"
-seed = 1
-scene_name = "2013_05_28_drive_0003_sync"
 
-basedir = "./data/KITTI-360"
+# scenes = ["japanesealley", "abandonedfactory"]
+scenes = ["japanesealley"]
+
+seed = 1
+scene_name = scenes[0]
+group_name = "TartanAir"
+run_name = str(datetime.now().strftime("%y%m%d-%H:%M:%S"))
+
+basedir = "/home/fu/data/TartanAir"
 
 # General Settings
 first_frame_mapping_iters = 1000
-tracking_iters = 40
-mapping_iters = 60
-opt_rskm_interval = 5
-densify_thres = 0.5 # For Addition of new Gaussians
+tracking_iters = 360
+mapping_iters = 150
+opt_rskm_interval=5
+densify_thres=0.5 # For Addition of new Gaussians
 end_frame = -1
 
-use_semantic_for_mapping = False
+# mapping
+use_semantic_for_mapping=True
 
 map_every = 1 # add Gaussians
 keyframe_every = 5
 mapping_window_size = 20
-
-group_name = "KITTI"
-run_name = str(datetime.now().strftime("%y%m%d-%H:%M:%S"))
 
 config = dict(
     workdir=f"./logs/{group_name}/{scene_name}_seed{seed}",
@@ -44,17 +48,17 @@ config = dict(
     checkpoint_interval=100, # Checkpoint Interval
     data=dict(
         basedir=basedir,
-        gradslam_data_cfg=f"./configs/camera/KITTI/{scene_name}.yaml",
-        sequence=scene_name,
-        desired_image_height=376,
-        desired_image_width=1408,
-        start=10,
-        end=20,
+        gradslam_data_cfg=f"./configs/camera/TartanAir/{scene_name}.yaml",
+        sequence=f"{scene_name}",
+        desired_image_height=480,
+        desired_image_width=640,
+        start=0,
+        end=end_frame,
         stride=1,
         num_frames=-1,
-        use_stereo=True, # Use Stereo Images
+        use_stereo = 1,
     ),
-    use_semantic=False,
+    use_semantic=True,
     semantic=dict(
         use_pretrain=False,
         pretrain_path="./pretrain",
@@ -63,7 +67,7 @@ config = dict(
     ),
     tracking=dict(
         use_gt_poses=False, # Use GT Poses for Tracking
-        use_semantic_for_tracking=False,
+        use_semantic_for_tracking=True,
         forward_prop=True, # Forward Propagate Poses
         num_iters=tracking_iters,
         use_alpha_for_loss=True,
@@ -101,7 +105,7 @@ config = dict(
         first_frame_mapping_iters=first_frame_mapping_iters,
         add_new_gaussians=True,
         densify_thres=densify_thres, # For Addition of new Gaussians
-        use_semantic_for_mapping=False,
+        use_semantic_for_mapping=True,
         opt_rskm_interval=opt_rskm_interval,
         use_l1=True,
         ignore_outlier_depth_loss=True,

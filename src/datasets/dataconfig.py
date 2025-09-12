@@ -4,7 +4,7 @@ import yaml
 from src.datasets.replica import ReplicaSemanticDataset
 from src.datasets.tum import TUMSemanticDataset
 from src.datasets.scannet import ScannetSemanticDataset
-from src.datasets.kitti import KITTISemanticDataset
+from src.datasets.tartanair import TartanAirSemanticDataset
 
 def get_dataset(config_dict, basedir, sequence, **kwargs):
     if config_dict["dataset_name"].lower() in ["replica"]:
@@ -13,8 +13,8 @@ def get_dataset(config_dict, basedir, sequence, **kwargs):
         return ScannetSemanticDataset(config_dict, basedir, sequence, **kwargs)
     elif config_dict["dataset_name"].lower() in ["tum"]:
         return TUMSemanticDataset(config_dict, basedir, sequence, **kwargs)
-    elif config_dict["dataset_name"].lower() in ["kitti"]:
-        return KITTISemanticDataset(config_dict, basedir, sequence, load_stereo=True, **kwargs)
+    elif config_dict["dataset_name"].lower() in ["tartanair"]:
+        return TartanAirSemanticDataset(config_dict, basedir, sequence, load_stereo=True, **kwargs)
     else:
         raise ValueError(f"Unknown dataset name {config_dict['dataset_name']}")
     

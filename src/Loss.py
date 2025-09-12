@@ -88,10 +88,10 @@ def get_loss(params, curr_data, variables, iter_time_idx, loss_weights,
         losses['im'] = 0.8 * l1_loss_v1(rendered_image, curr_data['im']) + 0.2 * (1.0 - calc_ssim(rendered_image, curr_data['im']))
     
     # Semantic Loss
+    gt_obj = curr_data["obj"].long()
     logits = semantic_decoder(rendered_objects) # type: ignore
     cls_criterion = torch.nn.CrossEntropyLoss(reduction='none')
     if tracking and use_semantic_for_tracking:
-        gt_obj = curr_data["obj"].long()
         if ignore_outlier_depth_loss:
             obj_mask = mask.detach().squeeze(0)
             loss_obj =  cls_criterion(logits.unsqueeze(0), gt_obj.unsqueeze(0)).squeeze()[obj_mask].sum()
