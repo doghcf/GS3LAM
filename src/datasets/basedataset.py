@@ -125,7 +125,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         if "crop_edge" in config_dict["camera_params"].keys():
             self.crop_edge = config_dict["camera_params"]["crop_edge"]
 
-        self.color_paths, self.depth_paths, self.object_paths, self.embedding_paths = self.get_filepaths()
+        self.color_paths, self.color_paths_right, self.depth_paths, self.depth_paths_right, self.object_paths, self.object_paths_right, self.embedding_paths = self.get_filepaths()
         
         if len(self.color_paths) != len(self.depth_paths):
             raise ValueError("Number of color and depth images must be the same.")
@@ -133,7 +133,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             if len(self.color_paths) != len(self.embedding_paths):
                 raise ValueError("Mismatch between number of color images and number of embedding files.")
         self.num_imgs = len(self.color_paths)
-        self.poses = self.load_poses()
+        self.poses, self.poses_right = self.load_poses()
 
         if self.end == -1:
             self.end = self.num_imgs
@@ -145,17 +145,21 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         if self.load_embeddings:
             self.embedding_paths = self.embedding_paths[self.start : self.end : stride]
         self.poses = self.poses[self.start : self.end : stride]
+        self.poses_right = self.poses_right[self.start : self.end : stride]
         # Tensor of retained indices (indices of frames and poses that were retained)
         self.retained_inds = torch.arange(self.num_imgs)[self.start : self.end : stride]
         # Update self.num_images after subsampling the dataset
         self.num_imgs = len(self.color_paths)
 
         self.poses = torch.stack(self.poses)
+        self.poses_right = torch.stack(self.poses_right)
 
         if self.relative_pose: # True
             self.transformed_poses = self._preprocess_poses(self.poses)
+            self.transformed_poses_right = self._preprocess_poses(self.poses_right)
         else:
             self.transformed_poses = self.poses
+            self.transformed_poses_right = self.poses_right
 
     def __len__(self):
         return self.num_imgs
@@ -264,19 +268,29 @@ class GradSLAMDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         color_path = self.color_paths[index]
+        color_path_right = self.color_paths_right[index]
         depth_path = self.depth_paths[index]
+        depth_path_right = self.depth_paths_right[index]
         
         color = np.asarray(imageio.imread(color_path), dtype=float)
+        color_path_right = np.asarray(imageio.imread(color_path_right), dtype=float)
         color = self._preprocess_color(color)
+        color_right = self._preprocess_color(color_path_right)
 
         object_path = self.object_paths[index]
-        objects = np.asarray(cv2.imread(object_path, cv2.IMREAD_UNCHANGED)).astype(np.uint8) if os.path.exists(object_path) else None
+        objects = np.load(object_path)
         objects = self._preprocess_objects(objects)
         objects = torch.from_numpy(objects)
+        objects_path_right = self.object_paths_right[index]
+        objects_right = np.load(objects_path_right)
+        objects_right = self._preprocess_objects(objects_right)
+        objects_right = torch.from_numpy(objects_right)
 
         if ".png" in depth_path:
-            # depth_data = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
             depth = np.asarray(imageio.imread(depth_path), dtype=np.int64)
+        elif ".npy" in depth_path:
+            depth = np.load(depth_path)
+            depth_right = np.load(depth_path_right)
         elif ".exr" in depth_path:
             print("Error depth format!!!")
             # depth = readEXR_onlydepth(depth_path)
@@ -285,36 +299,49 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         if self.distortion is not None:
             # undistortion is only applied on color image, not depth!
             color = cv2.undistort(color, K, self.distortion)
+            color_right= cv2.undistort(color_right, K, self.distortion)
 
         color = torch.from_numpy(color)
+        color_right = torch.from_numpy(color_right)
         K = torch.from_numpy(K)
 
         depth = self._preprocess_depth(depth)
+        depth_right = self._preprocess_depth(depth_right)
         depth = torch.from_numpy(depth)
+        depth_right = torch.from_numpy(depth_right)
 
         K = datautils.scale_intrinsics(K, self.height_downsample_ratio, self.width_downsample_ratio)
         intrinsics = torch.eye(4).to(K)
         intrinsics[:3, :3] = K
 
         pose = self.transformed_poses[index]
+        pose_right = self.transformed_poses_right[index]
 
         if self.load_embeddings: # False
             embedding = self.read_embedding_from_file(self.embedding_paths[index])
             return (
                 color.to(self.device).type(self.dtype),
+                color_right.to(self.device).type(self.dtype),
                 depth.to(self.device).type(self.dtype),
+                depth_right.to(self.device).type(self.dtype),
                 intrinsics.to(self.device).type(self.dtype),
                 pose.to(self.device).type(self.dtype),
+                pose_right.to(self.device).type(self.dtype),
                 objects.to(self.device).type(self.dtype),
+                objects_right.to(self.device).type(self.dtype),
                 embedding.to(self.device),  # Allow embedding to be another dtype
             )
 
         return (
                 color.to(self.device).type(self.dtype),
+                color_right.to(self.device).type(self.dtype),
                 depth.to(self.device).type(self.dtype),
+                depth_right.to(self.device).type(self.dtype),
                 intrinsics.to(self.device).type(self.dtype),
                 pose.to(self.device).type(self.dtype),
-                objects.to(self.device).type(self.dtype)
+                pose_right.to(self.device).type(self.dtype),
+                objects.to(self.device).type(self.dtype),
+                objects_right.to(self.device).type(self.dtype),
             )
         
        

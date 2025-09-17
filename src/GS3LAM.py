@@ -111,7 +111,7 @@ def run_gs3lam(config: dict):
         #####################################################
 
         # Load RGBD frames incrementally instead of all frames
-        color, depth, _, gt_pose, gt_objects = dataset[time_idx]
+        color, color_right, depth, depth_right, intrinsics, gt_pose, gt_pose_right, gt_objects, gt_objects_right = dataset[time_idx]
         
         # Process poses
         gt_w2c = torch.linalg.inv(gt_pose)
@@ -124,7 +124,9 @@ def run_gs3lam(config: dict):
         # Optimize only current time step for tracking
         iter_time_idx = time_idx
         # Initialize Mapping Data for selected frame
-        curr_data = {'cam': cam, 'im': color, 'depth': depth, 'obj': gt_objects, 
+        curr_data = {'cam': cam, 'im': color, 'im_right': color_right,
+                     'depth': depth, 'depth_right': depth_right,
+                     'obj': gt_objects, 'obj_right': gt_objects_right,
                      'id': iter_time_idx, 'intrinsics': intrinsics, 
                      'w2c': first_frame_w2c, 'iter_gt_w2c_list': curr_gt_w2c}
 
