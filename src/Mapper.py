@@ -9,40 +9,12 @@ _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 sys.path.insert(0, _BASE_DIR)
 
+from sklearn.neighbors import KDTree
+from sklearn.neighbors import NearestNeighbors
 from src.utils.sh_utils import RGB2SH
 from src.utils.gaussian_utils import transform_to_frame, build_rotation
 from src.Render import get_rasterizationSettings, transformed_params2rendervar
 from gaussian_semantic_rasterization import GaussianRasterizer
-
-def compute_depth_from_stereo(left_img, right_img, intrinsics, baseline):
-    """
-    使用 OpenCV SGBM 从双目图计算深度图
-    """
-    # 转灰度
-    left_gray = cv2.cvtColor(left_img, cv2.COLOR_RGB2GRAY)
-    right_gray = cv2.cvtColor(right_img, cv2.COLOR_RGB2GRAY)
-
-    # 创建 SGBM 匹配器
-    stereo = cv2.StereoSGBM_create(
-        minDisparity=0,
-        numDisparities=128,  # 要被16整除
-        blockSize=5,
-        P1=8 * 3 * 5**2,
-        P2=32 * 3 * 5**2,
-        mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY
-    )
-
-    # 计算视差图
-    disparity = stereo.compute(left_gray, right_gray).astype(np.float32) / 16.0  # [H, W]
-
-    # 转换为深度图
-    focal_length = intrinsics[0][0]  # fx
-    depth = (focal_length * baseline) / (disparity + 1e-6)  # 避免除以0
-    depth[disparity <= 0] = 0  # 过滤无效视差
-
-    # 转换为 torch.Tensor，形状为 (1, H, W)
-    depth_tensor = torch.from_numpy(depth).unsqueeze(0).cuda().float()
-    return depth_tensor
 
 def get_pointcloud(color, depth, intrinsics, w2c, transform_pts=True, 
                    mask=None, compute_mean_sq_dist=False, mean_sq_dist_method="projective", random_select=False):
@@ -155,6 +127,70 @@ def initialize_params(init_pt_cld, num_frames, mean3_sq_dist, gaussian_distribut
 
     return params, variables
 
+def remove_duplicate_points_single_array(point_data, mean3_sq_dist=None, threshold=0.001):
+    """
+    处理单个数组格式的点云去重
+    假设数组结构为: [X, Y, Z, R, G, B, ...] (可能还有其他属性)
+    """
+    # 提取坐标和颜色
+    points = point_data[:, :3]  # 前3列为坐标
+    colors = point_data[:, 3:6]  # 接下来的3列为颜色
+    
+    # 创建体素网格进行去重
+    voxel_size = threshold
+    voxel_grid = {}
+    
+    for i, point in enumerate(points):
+        voxel_idx = tuple(np.floor(point / voxel_size).astype(int))
+        if voxel_idx not in voxel_grid:
+            voxel_grid[voxel_idx] = []
+        voxel_grid[voxel_idx].append(i)
+    
+    # 为每个体素保留一个点（取平均值）
+    new_points = []
+    new_colors = []
+    new_mean3_sq_dist = []
+    # 如果有其他属性，也需要处理
+    other_attrs = []
+    has_other_attrs = point_data.shape[1] > 6
+    
+    if has_other_attrs:
+        other_attrs_data = point_data[:, 6:]
+    
+    for voxel_idx, indices in voxel_grid.items():
+        if indices:
+            # 取体素内所有点的平均位置和颜色
+            avg_point = np.mean(points[indices], axis=0)
+            avg_color = np.mean(colors[indices], axis=0)
+            new_points.append(avg_point)
+            new_colors.append(avg_color)
+
+            # 处理 mean3_sq_dist
+            if mean3_sq_dist is not None:
+                avg_mean3_sq_dist = torch.mean(mean3_sq_dist[indices], dim=0)
+                new_mean3_sq_dist.append(avg_mean3_sq_dist)
+            
+            # 如果有其他属性，也取平均值
+            if has_other_attrs:
+                avg_other = np.mean(other_attrs_data[indices], axis=0)
+                other_attrs.append(avg_other)
+    
+    # 重新组合数据
+    new_points = np.array(new_points)
+    new_colors = np.array(new_colors)
+    
+    if has_other_attrs:
+        other_attrs = np.array(other_attrs)
+        # 将坐标、颜色和其他属性重新组合成一个数组
+        result = np.concatenate([new_points, new_colors, other_attrs], axis=1)
+    else:
+        result = np.concatenate([new_points, new_colors], axis=1)
+    
+    if mean3_sq_dist is not None:
+        new_mean3_sq_dist = torch.stack(new_mean3_sq_dist, dim=0)
+        return result, new_mean3_sq_dist
+    else:
+        return result
 
 def initialize_first_timestep(dataset, num_frames, scene_radius_depth_ratio, mean_sq_dist_method, densify_dataset=None, gaussian_distribution=None, num_objects=16):
     # Get RGB-D Data & Camera Parameters
@@ -171,30 +207,25 @@ def initialize_first_timestep(dataset, num_frames, scene_radius_depth_ratio, mea
     w2c = torch.linalg.inv(pose)
     w2c_right = torch.linalg.inv(pose_right)
 
-    T_left_to_right = torch.tensor([
-        [1.0, 0.0, 0.0, 0.152676],
-        [0.0, 1.0, 0.0, 0.197964],
-        [0.0, 0.0, 1.0, 0.000000],
-        [0.0, 0.0, 0.0, 1.000000]
-    ], dtype=torch.float32, device=pose.device)
-
     # Setup Camera
     cam = get_rasterizationSettings(color.shape[2], color.shape[1], intrinsics.cpu().numpy(), w2c.detach().cpu().numpy())
 
     # Get Initial Point Cloud (PyTorch CUDA Tensor)
     mask = (depth > 0) # Mask out invalid depth values
     mask = mask.reshape(-1)
-    init_pt_cld, mean3_sq_dist = get_pointcloud(color, depth, intrinsics, w2c, 
+    pt_cld_left, mean3_sq_dist = get_pointcloud(color, depth, intrinsics, w2c, 
                                                 mask=mask, compute_mean_sq_dist=True, 
                                                 mean_sq_dist_method=mean_sq_dist_method)
 
     mask_right = (depth_right > 0)
     mask_right = mask_right.reshape(-1)
-    pt_cld_right, __ = get_pointcloud(color_right, depth_right, intrinsics, w2c_right,
+    pt_cld_right, mean3_sq_dist_right = get_pointcloud(color_right, depth_right, intrinsics, w2c_right,
                                      mask=mask_right, compute_mean_sq_dist=True,
                                      mean_sq_dist_method=mean_sq_dist_method)
 
-    # init_pt_cld = torch.cat([pt_cld_left, pt_cld_right], dim=0)
+    init_pt_cld = np.concatenate([pt_cld_left.cpu().numpy(), pt_cld_right.cpu().numpy()], axis=0)
+    mean3_sq_dist = torch.cat([mean3_sq_dist, mean3_sq_dist_right], dim=0)
+    init_pt_cld, mean3_sq_dist = remove_duplicate_points_single_array(init_pt_cld, mean3_sq_dist, threshold=0.005)
 
     # Initialize Parameters
     params, variables = initialize_params(init_pt_cld, num_frames, mean3_sq_dist, gaussian_distribution, num_objects)
@@ -280,6 +311,15 @@ def add_new_gaussians_alpha(params, variables, curr_data, densify_thres, time_id
     new_pt_cld, mean3_sq_dist = get_pointcloud(curr_data['im'], curr_data['depth'], curr_data['intrinsics'], 
                                 curr_w2c, mask=non_presence_mask, compute_mean_sq_dist=True,
                                 mean_sq_dist_method=mean_sq_dist_method, random_select=False)
+    
+    new_pt_cld_right, mean3_sq_dist_right = get_pointcloud(curr_data['im_right'], curr_data['depth_right'], curr_data['intrinsics'],
+                                curr_w2c, mask=non_presence_mask, compute_mean_sq_dist=True,
+                                mean_sq_dist_method=mean_sq_dist_method, random_select=False)
+    new_pt_cld = np.concatenate([new_pt_cld.cpu().numpy(), new_pt_cld_right.cpu().numpy()], axis=0)
+    mean3_sq_dist = torch.cat([mean3_sq_dist, mean3_sq_dist_right], dim=0)
+
+    new_pt_cld, mean3_sq_dist = remove_duplicate_points_single_array(new_pt_cld, mean3_sq_dist, threshold=0.005)
+
     new_params = initialize_new_params(new_pt_cld, mean3_sq_dist, gaussian_distribution, num_objects)
     
     for k, v in new_params.items():
