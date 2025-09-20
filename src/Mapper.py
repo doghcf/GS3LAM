@@ -150,12 +150,6 @@ def remove_duplicate_points_single_array(point_data, mean3_sq_dist=None, thresho
     new_points = []
     new_colors = []
     new_mean3_sq_dist = []
-    # 如果有其他属性，也需要处理
-    other_attrs = []
-    has_other_attrs = point_data.shape[1] > 6
-    
-    if has_other_attrs:
-        other_attrs_data = point_data[:, 6:]
     
     for voxel_idx, indices in voxel_grid.items():
         if indices:
@@ -169,25 +163,24 @@ def remove_duplicate_points_single_array(point_data, mean3_sq_dist=None, thresho
             if mean3_sq_dist is not None:
                 avg_mean3_sq_dist = torch.mean(mean3_sq_dist[indices], dim=0)
                 new_mean3_sq_dist.append(avg_mean3_sq_dist)
-            
-            # 如果有其他属性，也取平均值
-            if has_other_attrs:
-                avg_other = np.mean(other_attrs_data[indices], axis=0)
-                other_attrs.append(avg_other)
+    
+    # 确保始终是二维数组
+    if len(new_points) > 0:
+        new_points = np.array(new_points)
+        new_colors = np.array(new_colors)
+    else:
+        # 如果没有点，创建空的二维数组
+        new_points = np.empty((0, 3))
+        new_colors = np.empty((0, 3))
     
     # 重新组合数据
-    new_points = np.array(new_points)
-    new_colors = np.array(new_colors)
-    
-    if has_other_attrs:
-        other_attrs = np.array(other_attrs)
-        # 将坐标、颜色和其他属性重新组合成一个数组
-        result = np.concatenate([new_points, new_colors, other_attrs], axis=1)
-    else:
-        result = np.concatenate([new_points, new_colors], axis=1)
+    result = np.concatenate([new_points, new_colors], axis=1)
     
     if mean3_sq_dist is not None:
-        new_mean3_sq_dist = torch.stack(new_mean3_sq_dist, dim=0)
+        if len(new_mean3_sq_dist) > 0:
+            new_mean3_sq_dist = torch.stack(new_mean3_sq_dist, dim=0)
+        else:
+            new_mean3_sq_dist = torch.empty((0,))
         return result, new_mean3_sq_dist
     else:
         return result

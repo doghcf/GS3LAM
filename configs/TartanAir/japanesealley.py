@@ -18,7 +18,7 @@ tracking_iters = 40
 mapping_iters = 60
 opt_rskm_interval=5
 densify_thres=0.1 # For Addition of new Gaussians
-end_frame = -1
+end_frame = 20
 
 # mapping
 use_semantic_for_mapping=True
@@ -37,7 +37,7 @@ config = dict(
     mapping_window_size=mapping_window_size, # Mapping window size
     report_global_progress_every=100, # Report Global Progress every nth frame
     eval_every=5, # Evaluate every nth frame (at end of SLAM)
-    scene_radius_depth_ratio=25, # (Meters) Max First Frame Depth to Scene Radius Ratio (For Pruning/Densification)
+    scene_radius_depth_ratio=50, # (Meters) Max First Frame Depth to Scene Radius Ratio (For Pruning/Densification)
     mean_sq_dist_method="projective", # ["projective", "knn"] (Type of Mean Squared Distance Calculation for Scale of Gaussians)
     gaussian_distribution="isotropic", # ["isotropic", "anisotropic"] (Isotropic -> Spherical Covariance, Anisotropic -> Ellipsoidal Covariance)
     densify_method="alpha", # ['depth_sil', 'alpha']

@@ -115,9 +115,9 @@ def eval(dataset, final_params, num_frames, eval_dir,
     for time_idx in tqdm(range(num_frames)):
          # Get RGB-D Data & Camera Parameters
         if use_semantic:
-            color, color_right, depth, depth_right, intrinsics, pose, pose_right, gt_objects, gt_objects_right = dataset[0]
+            color, color_right, depth, depth_right, intrinsics, pose, pose_right, gt_objects, gt_objects_right = dataset[time_idx]
         else:
-            color, color_right, depth, depth_right, intrinsics, pose, pose_right = dataset[0]
+            color, color_right, depth, depth_right, intrinsics, pose, pose_right = dataset[time_idx]
 
         gt_w2c = torch.linalg.inv(pose)
         gt_w2c_list.append(gt_w2c)
@@ -125,9 +125,9 @@ def eval(dataset, final_params, num_frames, eval_dir,
 
         # Process RGB-D Data
         color = color.permute(2, 0, 1) / 255 # (H, W, C) -> (C, H, W)
-        color_right = color.permute(2, 0, 1) / 255
+        color_right = color_right.permute(2, 0, 1) / 255
         depth = depth.permute(2, 0, 1) # (H, W, C) -> (C, H, W)
-        depth_right = depth.permute(2, 0, 1)
+        depth_right = depth_right.permute(2, 0, 1)
 
         if time_idx == 0:
             # Process Camera Parameters
@@ -146,9 +146,9 @@ def eval(dataset, final_params, num_frames, eval_dir,
  
         # Define current frame data
         if use_semantic:
-            curr_data = {'cam': cam, 'im': color, 'depth': depth, "obj": gt_objects, 'id': time_idx, 'intrinsics': intrinsics, 'w2c': first_frame_w2c}
+            curr_data = {'cam': cam, 'im': color, 'im_right': color_right, 'depth': depth, 'depth_right': depth_right, "obj": gt_objects, "obj_right": gt_objects_right, 'id': time_idx, 'intrinsics': intrinsics, 'w2c': first_frame_w2c}
         else:
-            curr_data = {'cam': cam, 'im': color, 'depth': depth, 'id': time_idx, 'intrinsics': intrinsics, 'w2c': first_frame_w2c}
+            curr_data = {'cam': cam, 'im': color, 'im_right': color_right, 'depth': depth, 'depth_right': depth_right, 'id': time_idx, 'intrinsics': intrinsics, 'w2c': first_frame_w2c}
 
         # Initialize Render Variables
         rendervar = transformed_params2rendervar(final_params, transformed_gaussians)
@@ -214,8 +214,8 @@ def eval(dataset, final_params, num_frames, eval_dir,
             # Save Rendered RGB and Depth
             viz_render_im = torch.clamp(im, 0, 1)
             viz_render_im = viz_render_im.detach().cpu().permute(1, 2, 0).numpy()
-            vmin = 0
-            vmax = 6
+            vmin = 1
+            vmax = 50
             viz_render_depth = rastered_depth_viz[0].detach().cpu().numpy()
             normalized_depth = np.clip((viz_render_depth - vmin) / (vmax - vmin), 0, 1)
             depth_colormap = cv2.applyColorMap((normalized_depth * 255).astype(np.uint8), cv2.COLORMAP_JET)
