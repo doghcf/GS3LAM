@@ -128,25 +128,15 @@ def initialize_params(init_pt_cld, num_frames, mean3_sq_dist, gaussian_distribut
 
 def initialize_first_timestep(dataset, num_frames, scene_radius_depth_ratio, mean_sq_dist_method, densify_dataset=None, gaussian_distribution=None, num_objects=16):
     # Get RGB-D Data & Camera Parameters
-    color, color_right, depth, depth_right, intrinsics, pose, pose_right, gt_objects, gt_objects_right = dataset[0]
+    color, depth, intrinsics, pose, gt_objects = dataset[0]
 
     # Process RGB-D Data
     color = color.permute(2, 0, 1) / 255 # (H, W, C) -> (C, H, W)
-    color_right = color_right.permute(2, 0, 1) / 255
     depth = depth.permute(2, 0, 1) # (H, W, C) -> (C, H, W)
-    depth_right = depth_right.permute(2, 0, 1)
     
     # Process Camera Parameters
     intrinsics = intrinsics[:3, :3]
     w2c = torch.linalg.inv(pose)
-    w2c_right = torch.linalg.inv(pose_right)
-
-    T_left_to_right = torch.tensor([
-        [1.0, 0.0, 0.0, 0.152676],
-        [0.0, 1.0, 0.0, 0.197964],
-        [0.0, 0.0, 1.0, 0.000000],
-        [0.0, 0.0, 0.0, 1.000000]
-    ], dtype=torch.float32, device=pose.device)
 
     # Setup Camera
     cam = get_rasterizationSettings(color.shape[2], color.shape[1], intrinsics.cpu().numpy(), w2c.detach().cpu().numpy())
@@ -157,14 +147,6 @@ def initialize_first_timestep(dataset, num_frames, scene_radius_depth_ratio, mea
     init_pt_cld, mean3_sq_dist = get_pointcloud(color, depth, intrinsics, w2c, 
                                                 mask=mask, compute_mean_sq_dist=True, 
                                                 mean_sq_dist_method=mean_sq_dist_method)
-
-    mask_right = (depth_right > 0)
-    mask_right = mask_right.reshape(-1)
-    pt_cld_right, __ = get_pointcloud(color_right, depth_right, intrinsics, w2c_right,
-                                     mask=mask_right, compute_mean_sq_dist=True,
-                                     mean_sq_dist_method=mean_sq_dist_method)
-
-    # init_pt_cld = torch.cat([pt_cld_left, pt_cld_right], dim=0)
 
     # Initialize Parameters
     params, variables = initialize_params(init_pt_cld, num_frames, mean3_sq_dist, gaussian_distribution, num_objects)
