@@ -115,9 +115,9 @@ def eval(dataset, final_params, num_frames, eval_dir,
     for time_idx in tqdm(range(num_frames)):
          # Get RGB-D Data & Camera Parameters
         if use_semantic:
-            color, color_right, depth, depth_right, intrinsics, pose, pose_right, gt_objects, gt_objects_right = dataset[time_idx]
+            color, _, depth, _, intrinsics, pose, _, gt_objects, _ = dataset[time_idx]
         else:
-            color, color_right, depth, depth_right, intrinsics, pose, pose_right = dataset[time_idx]
+            color, _, depth, _, intrinsics, pose, _ = dataset[time_idx]
 
         gt_w2c = torch.linalg.inv(pose)
         gt_w2c_list.append(gt_w2c)
@@ -125,9 +125,7 @@ def eval(dataset, final_params, num_frames, eval_dir,
 
         # Process RGB-D Data
         color = color.permute(2, 0, 1) / 255 # (H, W, C) -> (C, H, W)
-        color_right = color_right.permute(2, 0, 1) / 255
         depth = depth.permute(2, 0, 1) # (H, W, C) -> (C, H, W)
-        depth_right = depth_right.permute(2, 0, 1)
 
         if time_idx == 0:
             # Process Camera Parameters
@@ -146,9 +144,9 @@ def eval(dataset, final_params, num_frames, eval_dir,
  
         # Define current frame data
         if use_semantic:
-            curr_data = {'cam': cam, 'im': color, 'im_right': color_right, 'depth': depth, 'depth_right': depth_right, "obj": gt_objects, "obj_right": gt_objects_right, 'id': time_idx, 'intrinsics': intrinsics, 'w2c': first_frame_w2c}
+            curr_data = {'cam': cam, 'im': color, 'depth': depth, "obj": gt_objects, 'id': time_idx, 'intrinsics': intrinsics, 'w2c': first_frame_w2c}
         else:
-            curr_data = {'cam': cam, 'im': color, 'im_right': color_right, 'depth': depth, 'depth_right': depth_right, 'id': time_idx, 'intrinsics': intrinsics, 'w2c': first_frame_w2c}
+            curr_data = {'cam': cam, 'im': color, 'depth': depth, 'id': time_idx, 'intrinsics': intrinsics, 'w2c': first_frame_w2c}
 
         # Initialize Render Variables
         rendervar = transformed_params2rendervar(final_params, transformed_gaussians)
@@ -184,7 +182,7 @@ def eval(dataset, final_params, num_frames, eval_dir,
             np.save(os.path.join(gt_mask_array_path, "gt_{:04d}.npy".format(time_idx)), gt_mask_array)
             np.save(os.path.join(pred_mask_array_path, "pred_{:04d}.npy".format(time_idx)), pred_mask_array)
 
-            pred_obj_mask = visualize_obj(pred_obj.cpu().numpy().astype(np.uint8))   
+            pred_obj_mask = visualize_obj(pred_obj.cpu().numpy().astype(np.uint8))
             gt_rgb_mask = visualize_obj(gt_objects.cpu().numpy().astype(np.uint8))
             rgb_mask = feature_to_rgb(rendered_objects)
         

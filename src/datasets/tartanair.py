@@ -27,8 +27,8 @@ class TartanAirSemanticDataset(GradSLAMDataset):
     ):
         print("Load tartanair dataset!!!")
         self.input_folder = os.path.join(basedir, sequence)
-        self.pose_path = os.path.join(self.input_folder, "Easy/P001/pose_left.txt")
-        self.pose_path_right = os.path.join(self.input_folder, "Easy/P001/pose_right.txt")
+        self.pose_path = os.path.join(self.input_folder, "Easy/P000/pose_left.txt")
+        self.pose_path_right = os.path.join(self.input_folder, "Easy/P000/pose_right.txt")
         super().__init__(
             config_dict,
             stride=stride,
@@ -43,12 +43,12 @@ class TartanAirSemanticDataset(GradSLAMDataset):
         )
 
     def get_filepaths(self):
-        color_paths = natsorted(glob.glob(f"{self.input_folder}/Easy/P001/image_left/00*.png"))
-        color_paths_right = natsorted(glob.glob(f"{self.input_folder}/Easy/P001/image_right/00*.png"))
-        depth_paths = natsorted(glob.glob(f"{self.input_folder}/Easy/P001/depth_left/00*.npy"))
-        depth_paths_right = natsorted(glob.glob(f"{self.input_folder}/Easy/P001/depth_right/00*.npy"))
-        object_paths = natsorted(glob.glob(f"{self.input_folder}/Easy/P001/seg_left/00*.npy"))
-        object_paths_right = natsorted(glob.glob(f"{self.input_folder}/Easy/P001/seg_right/00*.npy"))
+        color_paths = natsorted(glob.glob(f"{self.input_folder}/Easy/P000/image_left/00*.png"))
+        color_paths_right = natsorted(glob.glob(f"{self.input_folder}/Easy/P000/image_right/00*.png"))
+        depth_paths = natsorted(glob.glob(f"{self.input_folder}/Easy/P000/depth_left/00*.npy"))
+        depth_paths_right = natsorted(glob.glob(f"{self.input_folder}/Easy/P000/depth_right/00*.npy"))
+        object_paths = natsorted(glob.glob(f"{self.input_folder}/Easy/P000/seg_left/00*.npy"))
+        object_paths_right = natsorted(glob.glob(f"{self.input_folder}/Easy/P000/seg_right/00*.npy"))
 
         embedding_paths = None
         if self.load_embeddings:
