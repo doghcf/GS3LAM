@@ -115,9 +115,9 @@ def eval(dataset, final_params, num_frames, eval_dir,
     for time_idx in tqdm(range(num_frames)):
          # Get RGB-D Data & Camera Parameters
         if use_semantic:
-            color, depth, intrinsics, pose,gt_objects = dataset[0]
+            color, depth, intrinsics, pose, gt_objects = dataset[time_idx]
         else:
-            color, depth, intrinsics, pose = dataset[0]
+            color, depth, intrinsics, pose = dataset[time_idx]
 
         gt_w2c = torch.linalg.inv(pose)
         gt_w2c_list.append(gt_w2c)
