@@ -27,7 +27,7 @@ class TartanAirSemanticDataset(GradSLAMDataset):
     ):
         print("Load tartanair dataset!!!")
         self.input_folder = os.path.join(basedir, sequence)
-        self.pose_path = os.path.join(self.input_folder, "Easy/P000/pose_left.txt")
+        self.pose_path = os.path.join(self.input_folder, "pose_left.txt")
         super().__init__(
             config_dict,
             stride=stride,
@@ -42,9 +42,9 @@ class TartanAirSemanticDataset(GradSLAMDataset):
         )
 
     def get_filepaths(self):
-        color_paths = natsorted(glob.glob(f"{self.input_folder}/Easy/P000/image_left/*.png"))
-        depth_paths = natsorted(glob.glob(f"{self.input_folder}/Easy/P000/depth_left/*.npy"))
-        object_paths = natsorted(glob.glob(f"{self.input_folder}/Easy/P000/seg_left/*.npy"))
+        color_paths = natsorted(glob.glob(f"{self.input_folder}/image_left/*.png"))
+        depth_paths = natsorted(glob.glob(f"{self.input_folder}/depth_left/*.npy"))
+        object_paths = natsorted(glob.glob(f"{self.input_folder}/seg_left/*.npy"))
 
         embedding_paths = None
         if self.load_embeddings:

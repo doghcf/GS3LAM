@@ -2,11 +2,11 @@ from datetime import datetime
 
 primary_device="cuda:0"
 
-serises_name = "abandonedfactory"
+serises_name = "hospital"
 scenes = ["P000", "P001", "P002"]
 
-seed = 0
-scene_name = scenes[2]
+seed = 1
+scene_name = scenes[1]
 group_name = "TartanAir"
 run_name = str(datetime.now().strftime("%y%m%d-%H:%M:%S"))
 
@@ -37,7 +37,7 @@ config = dict(
     mapping_window_size=mapping_window_size, # Mapping window size
     report_global_progress_every=100, # Report Global Progress every nth frame
     eval_every=5, # Evaluate every nth frame (at end of SLAM)
-    scene_radius_depth_ratio=16288, # (Meters) Max First Frame Depth to Scene Radius Ratio (For Pruning/Densification)
+    scene_radius_depth_ratio=1, # (Meters) Max First Frame Depth to Scene Radius Ratio (For Pruning/Densification)
     mean_sq_dist_method="projective", # ["projective", "knn"] (Type of Mean Squared Distance Calculation for Scale of Gaussians)
     gaussian_distribution="isotropic", # ["isotropic", "anisotropic"] (Isotropic -> Spherical Covariance, Anisotropic -> Ellipsoidal Covariance)
     densify_method="alpha", # ['depth_sil', 'alpha']
