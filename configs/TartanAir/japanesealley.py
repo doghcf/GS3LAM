@@ -2,7 +2,8 @@ from datetime import datetime
 
 primary_device="cuda:0"
 
-scenes = ["japanesealley"]
+serises_name = "hospital"
+scenes = ["P001", "P002", "P003"]
 
 seed = 1
 scene_name = scenes[0]
@@ -27,7 +28,7 @@ keyframe_every = 5
 mapping_window_size = 24
 
 config = dict(
-    workdir=f"./logs/{group_name}/{scene_name}_seed{seed}",
+    workdir=f"./logs/{group_name}/{serises_name}/{scene_name}_seed{seed}",
     run_name=run_name,
     seed=seed,
     primary_device=primary_device,
@@ -47,7 +48,7 @@ config = dict(
     checkpoint_interval=100, # Checkpoint Interval
     data=dict(
         basedir=basedir,
-        gradslam_data_cfg=f"./configs/camera/TartanAir/{scene_name}.yaml",
+        gradslam_data_cfg=f"./configs/camera/tartanair.yaml",
         sequence=f"{scene_name}",
         desired_image_height=480,
         desired_image_width=640,
