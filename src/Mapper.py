@@ -185,6 +185,49 @@ def remove_duplicate_points_single_array(point_data, mean3_sq_dist=None, thresho
     else:
         return result
 
+def generate_right_pointcloud_from_left(depth_left, color_right, intrinsics, T_left_to_right):
+    """
+    根据左目深度图和右目RGB生成右目点云
+    """
+    H, W = depth_left.shape[-2:]
+    device = depth_left.device
+
+    # 1. 构建像素坐标网格
+    u, v = torch.meshgrid(torch.arange(W, device=device), torch.arange(H, device=device), indexing='xy')
+    ones = torch.ones_like(u)
+    pixels = torch.stack((u, v, ones), dim=-1).reshape(-1, 3).T  # (3, N)
+
+    # 2. 反投影到左目相机坐标系
+    K_inv = torch.linalg.inv(intrinsics)
+    z = depth_left.reshape(-1)
+    pts_cam_left = (K_inv @ pixels) * z  # (3, N)
+
+    # 3. 转换到右目坐标系
+    pts_cam_left_h = torch.cat([pts_cam_left, torch.ones((1, pts_cam_left.shape[1]), device=device)], dim=0)
+    pts_cam_right_h = T_left_to_right @ pts_cam_left_h
+    pts_cam_right = pts_cam_right_h[:3, :].T  # (N, 3)
+
+    # 4. 投影到右目像素坐标系
+    proj = intrinsics @ pts_cam_right.T
+    proj[:2, :] /= proj[2, :]  # 归一化除以z
+    u_r = proj[0, :].reshape(H, W)
+    v_r = proj[1, :].reshape(H, W)
+
+    # 5. 从右目图像采样颜色（双线性插值）
+    color_right = color_right.permute(2, 0, 1).unsqueeze(0)  # (1, C, H, W)
+    grid_x = 2 * (u_r / (W - 1)) - 1
+    grid_y = 2 * (v_r / (H - 1)) - 1
+    grid = torch.stack((grid_x, grid_y), dim=-1).unsqueeze(0)
+    sampled_color = torch.nn.functional.grid_sample(color_right, grid, align_corners=True)
+    sampled_color = sampled_color.squeeze().permute(1, 2, 0)  # (H, W, C)
+
+    # 6. 有效点掩码（在图像内且z>0）
+    valid = (proj[2, :] > 0) & (u_r >= 0) & (u_r < W) & (v_r >= 0) & (v_r < H)
+    pts_cam_right = pts_cam_right[valid]
+    sampled_color = sampled_color.reshape(-1, 3)[valid]
+
+    return pts_cam_right, sampled_color
+
 def initialize_first_timestep(dataset, num_frames, scene_radius_depth_ratio, mean_sq_dist_method, densify_dataset=None, gaussian_distribution=None, num_objects=16):
     # Get RGB-D Data & Camera Parameters
     color, color_right, depth, depth_right, intrinsics, pose, pose_right, gt_objects, gt_objects_right = dataset[0]
@@ -193,8 +236,9 @@ def initialize_first_timestep(dataset, num_frames, scene_radius_depth_ratio, mea
     color = color.permute(2, 0, 1) / 255 # (H, W, C) -> (C, H, W)
     color_right = color_right.permute(2, 0, 1) / 255
     depth = depth.permute(2, 0, 1) # (H, W, C) -> (C, H, W)
-    depth_right = depth_right.permute(2, 0, 1)
-    
+    if depth_right is not None:
+        depth_right = depth_right.permute(2, 0, 1)
+        
     # Process Camera Parameters
     intrinsics = intrinsics[:3, :3]
     w2c = torch.linalg.inv(pose)
@@ -210,11 +254,18 @@ def initialize_first_timestep(dataset, num_frames, scene_radius_depth_ratio, mea
                                                 mask=mask, compute_mean_sq_dist=True, 
                                                 mean_sq_dist_method=mean_sq_dist_method)
 
-    mask_right = (depth_right > 0)
-    mask_right = mask_right.reshape(-1)
-    pt_cld_right, mean3_sq_dist_right = get_pointcloud(color_right, depth_right, intrinsics, w2c_right,
-                                     mask=mask_right, compute_mean_sq_dist=True,
-                                     mean_sq_dist_method=mean_sq_dist_method)
+    pt_cld_right = None
+    if depth_right is not None:
+        mask_right = (depth_right > 0)
+        mask_right = mask_right.reshape(-1)
+        pt_cld_right, mean3_sq_dist_right = get_pointcloud(color_right, depth_right, intrinsics, w2c_right,
+                                        mask=mask_right, compute_mean_sq_dist=True,
+                                        mean_sq_dist_method=mean_sq_dist_method)
+    else:
+        T_left_to_right = torch.linalg.inv(pose_right) @ pose
+        pt_cld_right, color_right_pts = generate_right_pointcloud_from_left(
+            depth.squeeze(0), color_right, intrinsics, T_left_to_right
+        )
 
     init_pt_cld = np.concatenate([pt_cld_left.cpu().numpy(), pt_cld_right.cpu().numpy()], axis=0)
     mean3_sq_dist = torch.cat([mean3_sq_dist, mean3_sq_dist_right], dim=0)
@@ -224,7 +275,9 @@ def initialize_first_timestep(dataset, num_frames, scene_radius_depth_ratio, mea
     params, variables = initialize_params(init_pt_cld, num_frames, mean3_sq_dist, gaussian_distribution, num_objects)
 
     # Initialize an estimate of scene radius for Gaussian-Splatting Densification
-    variables['scene_radius'] = torch.max(depth) / scene_radius_depth_ratio
+    pt_cld_tensor = torch.tensor(init_pt_cld, device='cuda')
+    max_depth_from_points = torch.max(pt_cld_tensor[:, 2])  # Z坐标即深度
+    variables['scene_radius'] = torch.max(depth) / max_depth_from_points
 
     return params, variables, intrinsics, w2c, cam
     
@@ -324,5 +377,40 @@ def add_new_gaussians_alpha(params, variables, curr_data, densify_thres, time_id
     variables['max_2D_radius'] = torch.zeros(num_pts, device="cuda").float()
     new_timestep = time_idx*torch.ones(new_pt_cld.shape[0],device="cuda").float()
     variables['timestep'] = torch.cat((variables['timestep'],new_timestep),dim=0)
+
+    # ========== 新增：动态更新 scene_radius ==========
+    # 获取当前帧的有效深度值（去除0值）
+    valid_depths = curr_data['depth'][curr_data['depth'] > 0]
+    
+    if len(valid_depths) > 0:
+        # 方法1：使用深度中值作为场景半径估计（对异常值更鲁棒）
+        depth_median = torch.median(valid_depths)
+        
+        # 方法2：使用深度值的百分位数（避免极端值影响）
+        depth_90_percentile = torch.quantile(valid_depths, 0.9)
+        
+        # 方法3：结合中值和范围进行动态调整
+        depth_min = torch.min(valid_depths)
+        depth_max = torch.max(valid_depths)
+        
+        # 动态计算场景半径，考虑深度范围的变化
+        if depth_max > 100:  # 如果深度范围很大，使用对数缩放
+            scene_radius = torch.log(depth_median + 1) * 2.0
+        else:  # 正常范围，使用线性关系
+            scene_radius = depth_median * 1.5
+            
+        # 限制场景半径的变化范围，避免剧烈波动
+        current_radius = variables.get('scene_radius', torch.tensor(1.0).cuda())
+        if 'scene_radius' in variables:
+            # 平滑更新：新值 = 0.7 * 旧值 + 0.3 * 新计算值
+            smoothed_radius = 0.7 * current_radius + 0.3 * scene_radius
+            variables['scene_radius'] = smoothed_radius
+        else:
+            variables['scene_radius'] = scene_radius
+            
+        # 可选：打印调试信息
+        if time_idx % 10 == 0:  # 每10帧打印一次
+            print(f"Frame {time_idx}: Depth range [{depth_min:.2f}, {depth_max:.2f}], "
+                  f"Scene radius: {variables['scene_radius']:.2f}")
 
     return params, variables

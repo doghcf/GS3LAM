@@ -278,22 +278,37 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         color_right = self._preprocess_color(color_path_right)
 
         object_path = self.object_paths[index]
-        objects = np.load(object_path)
-        objects = self._preprocess_objects(objects)
-        objects = torch.from_numpy(objects)
+        # objects = np.load(object_path)
+        # objects = self._preprocess_objects(objects)
+        # objects = torch.from_numpy(objects)
         objects_path_right = self.object_paths_right[index]
-        objects_right = np.load(objects_path_right)
-        objects_right = self._preprocess_objects(objects_right)
-        objects_right = torch.from_numpy(objects_right)
+        # objects_right = np.load(objects_path_right)
+        # objects_right = self._preprocess_objects(objects_right)
+        # objects_right = torch.from_numpy(objects_right)
 
         if ".png" in depth_path:
             depth = np.asarray(imageio.imread(depth_path), dtype=np.int64)
+            depth_right = np.asarray(imageio.imread(depth_path_right), dtype=np.int64)
         elif ".npy" in depth_path:
             depth = np.load(depth_path)
             depth_right = np.load(depth_path_right)
         elif ".exr" in depth_path:
             print("Error depth format!!!")
             # depth = readEXR_onlydepth(depth_path)
+
+        if ".png" in object_path:
+            object_path = np.asarray(imageio.imread(object_path), dtype=float)
+            objects_path_right = np.asarray(imageio.imread(objects_path_right), dtype=float)
+        elif ".npy" in object_path:
+            object_path = np.load(object_path)
+            objects_path_right = np.load(objects_path_right)
+        elif ".exr" in object_path:
+            print("Error object format!!!")
+
+        objects = self._preprocess_objects(object_path)
+        objects_right = self._preprocess_objects(objects_path_right)
+        objects = torch.from_numpy(objects)
+        objects_right = torch.from_numpy(objects_right)
 
         K = as_intrinsics_matrix([self.fx, self.fy, self.cx, self.cy])
         if self.distortion is not None:

@@ -72,7 +72,7 @@ def run_gs3lam(config: dict):
 
     # Initialize Parameters & Canoncial Camera parameters
     params, variables, intrinsics, first_frame_w2c, cam = initialize_first_timestep(
-        dataset, num_frames, config['scene_radius_depth_ratio'],
+        dataset, num_frames, 0,
         config['mean_sq_dist_method'], gaussian_distribution=config['gaussian_distribution'],
         num_objects=config['semantic']["num_objects"]
     )

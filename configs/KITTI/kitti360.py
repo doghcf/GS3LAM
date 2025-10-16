@@ -2,15 +2,13 @@ from datetime import datetime
 
 primary_device="cuda:0"
 
-serises_name = "hospital"
-scenes = ["P001", "P002", "P003"]
-
+scenes = ["2013_05_28_drive_0003_sync_copy"]
 seed = 1
 scene_name = scenes[0]
-group_name = "TartanAir"
+group_name = "KITTI360"
 run_name = str(datetime.now().strftime("%y%m%d-%H:%M:%S"))
 
-basedir = "/home/fu/data/TartanAir"
+basedir = "/home/fu/data/KITTI-360"
 
 # General Settings
 first_frame_mapping_iters = 1000
@@ -18,26 +16,26 @@ tracking_iters = 40
 mapping_iters = 60
 opt_rskm_interval=5
 densify_thres=0.1 # For Addition of new Gaussians
-end_frame = 20
+end_frame = 100 
 
 # mapping
-use_semantic_for_mapping=True
+use_semantic_for_mapping = True
 
 map_every = 1 # add Gaussians
 keyframe_every = 5
 mapping_window_size = 24
 
 config = dict(
-    workdir=f"./logs/{group_name}/{serises_name}/{scene_name}_seed{seed}",
+    workdir=f"./logs/{group_name}/{scene_name}_seed{seed}",
     run_name=run_name,
     seed=seed,
     primary_device=primary_device,
     map_every=map_every, # Mapping every nth frame
     keyframe_every=keyframe_every, # Keyframe every nth frame
     mapping_window_size=mapping_window_size, # Mapping window size
-    report_global_progress_every=100, # Report Global Progress every nth frame
+    report_global_progress_every=20, # Report Global Progress every nth frame
     eval_every=5, # Evaluate every nth frame (at end of SLAM)
-    # scene_radius_depth_ratio=26, # (Meters) Max First Frame Depth to Scene Radius Ratio (For Pruning/Densification)
+    # scene_radius_depth_ratio=10, # (Meters) Max First Frame Depth to Scene Radius Ratio (For Pruning/Densification)
     mean_sq_dist_method="projective", # ["projective", "knn"] (Type of Mean Squared Distance Calculation for Scale of Gaussians)
     gaussian_distribution="isotropic", # ["isotropic", "anisotropic"] (Isotropic -> Spherical Covariance, Anisotropic -> Ellipsoidal Covariance)
     densify_method="alpha", # ['depth_sil', 'alpha']
@@ -48,10 +46,10 @@ config = dict(
     checkpoint_interval=100, # Checkpoint Interval
     data=dict(
         basedir=basedir,
-        gradslam_data_cfg=f"./configs/camera/tartanair.yaml",
+        gradslam_data_cfg=f"./configs/camera/kitti360.yaml",
         sequence=f"{scene_name}",
-        desired_image_height=480,
-        desired_image_width=640,
+        desired_image_height=376,
+        desired_image_width=1408,
         start=0,
         end=end_frame,
         stride=1,
