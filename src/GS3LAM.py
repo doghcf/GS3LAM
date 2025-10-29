@@ -116,8 +116,9 @@ def run_gs3lam(config: dict):
         # Process poses
         gt_w2c = torch.linalg.inv(gt_pose)
         # Process RGB-D Data
-        color = color.permute(2, 0, 1) / 255 # BGR->RGB
-        depth = depth.permute(2, 0, 1)
+        color = color.unsqueeze(0) / 255
+        color = color.repeat(3, 1, 1)
+        depth = depth.unsqueeze(0)
         gt_w2c_all_frames.append(gt_w2c)
         curr_gt_w2c = gt_w2c_all_frames
 
@@ -440,8 +441,15 @@ def run_gs3lam(config: dict):
     print(f"Average Tracking/Frame Time: {tracking_frame_time_avg} s")
     print(f"Average Mapping/Iteration Time: {mapping_iter_time_avg*1000} ms")
     print(f"Average Mapping/Frame Time: {mapping_frame_time_avg} s")
-    print("Tracking FPS: {:.5f}".format(sum(t_fps_list) / len(t_fps_list)))
-    print("Mapping FPS: {:.5f}".format(sum(m_fps_list) / len(m_fps_list)))
+    if t_fps_list:
+        print("Tracking FPS: {:.5f}".format(sum(t_fps_list) / len(t_fps_list)))
+    else:
+        print("Tracking FPS: N/A (no tracking iterations performed)")
+
+    if m_fps_list:
+        print("Mapping FPS: {:.5f}".format(sum(m_fps_list) / len(m_fps_list)))
+    else:
+        print("Mapping FPS: N/A (no mapping iterations performed)")
 
     # save result
     running_times = []

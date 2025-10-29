@@ -15,6 +15,7 @@ import cv2
 import imageio.v2 as imageio
 import numpy as np
 import torch
+import math
 
 from src.datasets.geometryutils import relative_transformation
 from src.datasets import datautils
@@ -60,6 +61,9 @@ def from_intrinsics_matrix(K):
     cy = to_scalar(K[1, 2])
     return fx, fy, cx, cy
 
+def focal2fov(focal, pixels):
+    return 2 * math.atan(pixels / (2 * focal))
+
 class GradSLAMDataset(torch.utils.data.Dataset):
     def __init__(
         self,
@@ -86,10 +90,82 @@ class GradSLAMDataset(torch.utils.data.Dataset):
 
         self.orig_height = config_dict["camera_params"]["image_height"]
         self.orig_width = config_dict["camera_params"]["image_width"]
-        self.fx = config_dict["camera_params"]["fx"]
-        self.fy = config_dict["camera_params"]["fy"]
-        self.cx = config_dict["camera_params"]["cx"]
-        self.cy = config_dict["camera_params"]["cy"]
+        calibration = config_dict["camera_params"]
+        cam0raw = calibration["cam0"]["raw"]
+        cam0opt = calibration["cam0"]["opt"]
+        cam1raw = calibration["cam1"]["raw"]
+        cam1opt = calibration["cam1"]["opt"]
+        self.fx_raw = cam0raw["fx"]
+        self.fy_raw = cam0raw["fy"]
+        self.cx_raw = cam0raw["cx"]
+        self.cy_raw = cam0raw["cy"]
+        self.fx = cam0opt["fx"]
+        self.fy = cam0opt["fy"]
+        self.cx = cam0opt["cx"]
+        self.cy = cam0opt["cy"]
+
+        self.fx_raw_r = cam1raw["fx"]
+        self.fy_raw_r = cam1raw["fy"]
+        self.cx_raw_r = cam1raw["cx"]
+        self.cy_raw_r = cam1raw["cy"]
+        self.fx_r = cam1opt["fx"]
+        self.fy_r = cam1opt["fy"]
+        self.cx_r = cam1opt["cx"]
+        self.cy_r = cam1opt["cy"]
+
+        self.fovx = focal2fov(self.fx, self.orig_height)
+        self.fovy = focal2fov(self.fy, self.orig_width)
+        self.K_raw = np.array(
+            [
+                [self.fx_raw, 0.0, self.cx_raw],
+                [0.0, self.fy_raw, self.cy_raw],
+                [0.0, 0.0, 1.0],
+            ]
+        )
+
+        self.K = np.array(
+            [[self.fx, 0.0, self.cx], [0.0, self.fy, self.cy], [0.0, 0.0, 1.0]]
+        )
+
+        self.Rmat = np.array(calibration["cam0"]["R"]["data"]).reshape(3, 3)
+        self.K_raw_r = np.array(
+            [
+                [self.fx_raw_r, 0.0, self.cx_raw_r],
+                [0.0, self.fy_raw_r, self.cy_raw_r],
+                [0.0, 0.0, 1.0],
+            ]
+        )
+
+        self.K_r = np.array(
+            [[self.fx_r, 0.0, self.cx_r], [0.0, self.fy_r, self.cy_r], [0.0, 0.0, 1.0]]
+        )
+        self.Rmat_r = np.array(calibration["cam1"]["R"]["data"]).reshape(3, 3)
+
+        # distortion parameters
+        self.distorted = calibration["distorted"]
+        self.dist_coeffs = np.array(
+            [cam0raw["k1"], cam0raw["k2"], cam0raw["p1"], cam0raw["p2"], cam0raw["k3"]]
+        )
+        self.map1x, self.map1y = cv2.initUndistortRectifyMap(
+            self.K_raw,
+            self.dist_coeffs,
+            self.Rmat,
+            self.K,
+            (self.orig_width, self.orig_height),
+            cv2.CV_32FC1,
+        )
+
+        self.dist_coeffs_r = np.array(
+            [cam1raw["k1"], cam1raw["k2"], cam1raw["p1"], cam1raw["p2"], cam1raw["k3"]]
+        )
+        self.map1x_r, self.map1y_r = cv2.initUndistortRectifyMap(
+            self.K_raw_r,
+            self.dist_coeffs_r,
+            self.Rmat_r,
+            self.K_r,
+            (self.orig_width, self.orig_height),
+            cv2.CV_32FC1,
+        )
 
         self.dtype = dtype
 
@@ -125,9 +201,9 @@ class GradSLAMDataset(torch.utils.data.Dataset):
         if "crop_edge" in config_dict["camera_params"].keys():
             self.crop_edge = config_dict["camera_params"]["crop_edge"]
 
-        self.color_paths, self.depth_paths, self.object_paths, self.embedding_paths = self.get_filepaths()
+        self.color_paths, self.color_paths_r, self.object_paths, self.embedding_paths = self.get_filepaths()
         
-        if len(self.color_paths) != len(self.depth_paths):
+        if len(self.color_paths) != len(self.color_paths_r):
             raise ValueError("Number of color and depth images must be the same.")
         if self.load_embeddings:
             if len(self.color_paths) != len(self.embedding_paths):
@@ -139,7 +215,7 @@ class GradSLAMDataset(torch.utils.data.Dataset):
             self.end = self.num_imgs
 
         self.color_paths = self.color_paths[self.start : self.end : stride]
-        self.depth_paths = self.depth_paths[self.start : self.end : stride]
+        self.color_paths_r = self.color_paths_r[self.start : self.end : stride]
         self.object_paths = self.object_paths[self.start : self.end : stride]
 
         if self.load_embeddings:
@@ -264,39 +340,49 @@ class GradSLAMDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         color_path = self.color_paths[index]
-        depth_path = self.depth_paths[index]
-        
-        color = np.asarray(imageio.imread(color_path), dtype=float)
-        color = self._preprocess_color(color)
+        color_path_right = self.color_paths_r[index]
+
+        image = cv2.imread(color_path, 0)
+        image_r = cv2.imread(color_path_right, 0)
+        depth = None
+        if self.distorted:
+            image = cv2.remap(image, self.map1x, self.map1y, cv2.INTER_LINEAR)
+            image_r = cv2.remap(image_r, self.map1x_r, self.map1y_r, cv2.INTER_LINEAR)
+        stereo = cv2.StereoSGBM_create(minDisparity=0, numDisparities=64, blockSize=20)
+        stereo.setUniquenessRatio(40)
+        disparity = stereo.compute(image, image_r) / 16.0
+        disparity[disparity == 0] = 1e10
+        depth = 47.90639384423901 / (
+            disparity
+        )  ## Following ORB-SLAM2 config, baseline*fx
+        depth[depth < 0] = 0
+
+        color = np.asarray(imageio.imread(color_path, mode='F'), dtype=float)
+        color_right = np.asarray(imageio.imread(color_path_right, mode='F'), dtype=float)
 
         object_path = self.object_paths[index]
-        objects = np.load(object_path)
+        if ".png" in object_path:
+            objects = np.asarray(imageio.imread(object_path, mode='F'), dtype=float)
+        elif ".npy" in object_path:
+            objects = np.load(object_path)
+
         objects = self._preprocess_objects(objects)
         objects = torch.from_numpy(objects)
-
-        if ".png" in depth_path:
-            depth = np.asarray(imageio.imread(depth_path), dtype=np.int64)
-        elif ".npy" in depth_path:
-            depth = np.load(depth_path)
-        elif ".exr" in depth_path:
-            print("Error depth format!!!")
-            # depth = readEXR_onlydepth(depth_path)
 
         K = as_intrinsics_matrix([self.fx, self.fy, self.cx, self.cy])
         if self.distortion is not None:
             # undistortion is only applied on color image, not depth!
             color = cv2.undistort(color, K, self.distortion)
 
-        color = torch.from_numpy(color)
         K = torch.from_numpy(K)
-
-        depth = self._preprocess_depth(depth)
-        depth = torch.from_numpy(depth)
 
         K = datautils.scale_intrinsics(K, self.height_downsample_ratio, self.width_downsample_ratio)
         intrinsics = torch.eye(4).to(K)
         intrinsics[:3, :3] = K
 
+        # 转换深度为PyTorch张量
+        depth = torch.from_numpy(depth).to(dtype=torch.float32)
+        color = torch.from_numpy(color)
         pose = self.transformed_poses[index]
 
         if self.load_embeddings: # False

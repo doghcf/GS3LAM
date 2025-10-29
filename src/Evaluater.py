@@ -124,8 +124,9 @@ def eval(dataset, final_params, num_frames, eval_dir,
         intrinsics = intrinsics[:3, :3]
 
         # Process RGB-D Data
-        color = color.permute(2, 0, 1) / 255 # (H, W, C) -> (C, H, W)
-        depth = depth.permute(2, 0, 1) # (H, W, C) -> (C, H, W)
+        color = color.unsqueeze(0) / 255
+        color = color.repeat(3, 1, 1)
+        depth = depth.unsqueeze(0)
 
         if time_idx == 0:
             # Process Camera Parameters
@@ -175,8 +176,8 @@ def eval(dataset, final_params, num_frames, eval_dir,
             logits = classifier(rendered_objects)
             pred_obj = torch.argmax(logits, dim=0)
             # For mIoU
-            # gt_mask_list.append(gt_objects.cpu().numpy().astype(np.uint8))
-            # pred_mask_list.append(pred_obj.cpu().numpy().astype(np.uint8))
+            gt_mask_list.append(gt_objects.cpu().numpy().astype(np.uint8))
+            pred_mask_list.append(pred_obj.cpu().numpy().astype(np.uint8))
             gt_mask_array = gt_objects.cpu().numpy().astype(np.uint8)
             pred_mask_array = pred_obj.cpu().numpy().astype(np.uint8)
             np.save(os.path.join(gt_mask_array_path, "gt_{:04d}.npy".format(time_idx)), gt_mask_array)
@@ -234,9 +235,38 @@ def eval(dataset, final_params, num_frames, eval_dir,
                 cv2.imwrite(os.path.join(render_object_dir, "gs_{:04d}.png".format(time_idx)), pred_obj_mask)
                 cv2.imwrite(os.path.join(objects_feature16_dir, "{:04d}.png".format(time_idx)), rgb_mask)
 
-
     avg_metric = []
     avg_metric.append("Rendering FPS: {:.5f}".format(sum(fps_list) / len(fps_list)))
+    if use_semantic:
+        all_classes = set()
+        for gt_mask in gt_mask_list:
+            all_classes.update(np.unique(gt_mask))
+        for pred_mask in pred_mask_list:
+            all_classes.update(np.unique(pred_mask))
+        
+        all_classes = sorted(list(all_classes))
+        iou_scores = []
+
+        for cls in all_classes:
+            if cls == 0:  # 通常0是背景类，可根据需要调整
+                continue
+                
+            intersection = 0
+            union = 0
+            
+            for gt_mask, pred_mask in zip(gt_mask_list, pred_mask_list):
+                gt_bool = (gt_mask == cls)
+                pred_bool = (pred_mask == cls)
+                
+                intersection += np.sum(gt_bool & pred_bool)
+                union += np.sum(gt_bool | pred_bool)
+            
+            if union > 0:
+                iou_scores.append(intersection / union)
+        
+        miou = np.mean(iou_scores)
+        print("Mean IoU (mIoU): {:.4f}".format(miou))
+        avg_metric.append("Mean IoU (mIoU): {:.4f}".format(miou))
 
     try:
         # Compute the final ATE RMSE

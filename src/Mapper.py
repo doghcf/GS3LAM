@@ -57,7 +57,14 @@ def get_pointcloud(color, depth, intrinsics, w2c, transform_pts=True,
             raise ValueError(f"Unknown mean_sq_dist_method {mean_sq_dist_method}")
     
     # Colorize point cloud
-    cols = torch.permute(color, (1, 2, 0)).reshape(-1, 3) # (C, H, W) -> (H, W, C) -> (H * W, C)
+    if len(color.shape) == 2:
+        cols = color.reshape(-1, 1)
+        cols = cols.repeat(1, 3)  # 转换为RGB
+    elif len(color.shape) == 3 and color.shape[0] == 1:
+        cols = color.permute(1, 2, 0).reshape(-1, 1)
+        cols = cols.repeat(1, 3)  # 转换为RGB
+    else:
+        cols = color.permute(1, 2, 0).reshape(-1, color.shape[0])
     point_cld = torch.cat((pts, cols), -1)
 
     if random_select:
@@ -131,8 +138,9 @@ def initialize_first_timestep(dataset, num_frames, scene_radius_depth_ratio, mea
     color, depth, intrinsics, pose, gt_objects = dataset[0]
 
     # Process RGB-D Data
-    color = color.permute(2, 0, 1) / 255 # (H, W, C) -> (C, H, W)
-    depth = depth.permute(2, 0, 1) # (H, W, C) -> (C, H, W)
+    color = color.unsqueeze(0) / 255
+    color = color.repeat(3, 1, 1)
+    depth = depth.unsqueeze(0)
     
     # Process Camera Parameters
     intrinsics = intrinsics[:3, :3]
