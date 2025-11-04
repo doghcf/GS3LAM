@@ -16,12 +16,27 @@ from src.utils.gaussian_utils import transform_to_frame, build_rotation
 from src.Render import get_rasterizationSettings, transformed_params2rendervar
 from gaussian_semantic_rasterization import GaussianRasterizer
 
+sys.path.append(os.path.expanduser('/home/fu/GS3LAM/submodules/RAFT-Stereo'))
+from types import SimpleNamespace
+from argparse import Namespace
+from core.raft_stereo import RAFTStereo
+from core.utils.utils import InputPadder
+
 def get_pointcloud(color, depth, intrinsics, w2c, transform_pts=True, 
                    mask=None, compute_mean_sq_dist=False, mean_sq_dist_method="projective", random_select=False):
     """
     将彩色图像与深度图像转换为三维点云，并可选地进行坐标变换、高斯尺度估计（均方距离）、掩码筛选和随机采样
     """
-    width, height = color.shape[2], color.shape[1]
+    if len(color.shape) == 3:
+        width, height = color.shape[2], color.shape[1]  # [C, H, W]格式
+    else:
+        height, width = color.shape  # [H, W]格式
+
+    if not isinstance(depth, torch.Tensor):
+        depth = torch.from_numpy(depth).cuda().float()
+    elif not depth.is_cuda:
+        depth = depth.cuda().float()
+
     CX = intrinsics[0][2]
     CY = intrinsics[1][2]
     FX = intrinsics[0][0]
@@ -35,7 +50,7 @@ def get_pointcloud(color, depth, intrinsics, w2c, transform_pts=True,
     yy = (y_grid - CY)/FY
     xx = xx.reshape(-1)
     yy = yy.reshape(-1)
-    depth_z = depth[0].reshape(-1)
+    depth_z = depth.reshape(-1)
 
     # points in camera coordinates
     pts_cam = torch.stack((xx * depth_z, yy * depth_z, depth_z), dim=-1)
@@ -59,7 +74,10 @@ def get_pointcloud(color, depth, intrinsics, w2c, transform_pts=True,
             raise ValueError(f"Unknown mean_sq_dist_method {mean_sq_dist_method}")
     
     # Colorize point cloud
-    cols = torch.permute(color, (1, 2, 0)).reshape(-1, 3) # (C, H, W) -> (H, W, C) -> (H * W, C)
+    if len(color.shape) == 3 and color.shape[0] in [1, 3]:  # [C, H, W]格式
+        cols = torch.permute(color, (1, 2, 0)).reshape(-1, 3) # (C, H, W) -> (H, W, C) -> (H * W, C)
+    else:  # [H, W]格式
+        cols = color.reshape(-1, 1).repeat(1, 3)  # 转换为3通道
     point_cld = torch.cat((pts, cols), -1)
 
     if random_select:
@@ -185,100 +203,154 @@ def remove_duplicate_points_single_array(point_data, mean3_sq_dist=None, thresho
     else:
         return result
 
-def generate_right_pointcloud_from_left(depth_left, color_right, intrinsics, T_left_to_right):
+def estimate_disparity_confidence(disparity, left_image, right_image, kernel_size=5):
     """
-    根据左目深度图和右目RGB生成右目点云
+    基于视差一致性和图像边缘的简单置信度估计
     """
-    H, W = depth_left.shape[-2:]
-    device = depth_left.device
+    
+    # 转换为numpy数组（如果是tensor）
+    if isinstance(disparity, torch.Tensor):
+        disparity_np = disparity.cpu().numpy()
+    else:
+        disparity_np = disparity
+        
+    if isinstance(left_image, torch.Tensor):
+        left_img = left_image.cpu().numpy()
+        if left_img.ndim == 4:
+            left_img = left_img[0]  # 去除batch维度
+        if left_img.shape[0] in [1, 3]:  # CHW格式
+            left_img = np.transpose(left_img, (1, 2, 0))
+    else:
+        left_img = left_image
+        
+    # 转换为灰度图
+    if left_img.ndim == 3 and left_img.shape[2] in [1, 3]:
+        gray_img = cv2.cvtColor(left_img if left_img.shape[2] == 3 else 
+                               np.repeat(left_img, 3, axis=2), cv2.COLOR_RGB2GRAY)
+    else:
+        gray_img = left_img
+        
+    # 1. 基于图像边缘的置信度（边缘区域置信度较低）
+    edges = cv2.Canny((gray_img * 255).astype(np.uint8), 50, 150)
+    edge_distances = cv2.distanceTransform(255 - edges, cv2.DIST_L2, 5)
+    edge_confidence = np.clip(edge_distances / 20.0, 0, 1)  # 归一化到[0,1]
+    
+    # 2. 基于局部视差一致性的置信度
+    # 计算视差梯度
+    grad_x = cv2.Sobel(disparity_np, cv2.CV_64F, 1, 0, ksize=3)
+    grad_y = cv2.Sobel(disparity_np, cv2.CV_64F, 0, 1, ksize=3)
+    disparity_gradients = np.sqrt(grad_x**2 + grad_y**2)
+    
+    # 梯度越小，置信度越高
+    gradient_confidence = 1.0 - np.clip(disparity_gradients / np.percentile(disparity_gradients, 90), 0, 1)
+    
+    # 3. 组合置信度
+    combined_confidence = edge_confidence * gradient_confidence
+    
+    # 转换回tensor并移到GPU
+    confidence_tensor = torch.from_numpy(combined_confidence).float()
+    if isinstance(disparity, torch.Tensor) and disparity.is_cuda:
+        confidence_tensor = confidence_tensor.cuda()
+        
+    return confidence_tensor
 
-    # 1. 构建像素坐标网格
-    u, v = torch.meshgrid(torch.arange(W, device=device), torch.arange(H, device=device), indexing='xy')
-    ones = torch.ones_like(u)
-    pixels = torch.stack((u, v, ones), dim=-1).reshape(-1, 3).T  # (3, N)
+def initialize_first_timestep(dataset, num_frames, mean_sq_dist_method, densify_dataset=None, gaussian_distribution=None, num_objects=16):
+    # Get Image Data & Camera Parameters
+    color, color_right, _, intrinsics, pose, gt_objects = dataset[0]
 
-    # 2. 反投影到左目相机坐标系
-    K_inv = torch.linalg.inv(intrinsics)
-    z = depth_left.reshape(-1)
-    pts_cam_left = (K_inv @ pixels) * z  # (3, N)
-
-    # 3. 转换到右目坐标系
-    pts_cam_left_h = torch.cat([pts_cam_left, torch.ones((1, pts_cam_left.shape[1]), device=device)], dim=0)
-    pts_cam_right_h = T_left_to_right @ pts_cam_left_h
-    pts_cam_right = pts_cam_right_h[:3, :].T  # (N, 3)
-
-    # 4. 投影到右目像素坐标系
-    proj = intrinsics @ pts_cam_right.T
-    proj[:2, :] /= proj[2, :]  # 归一化除以z
-    u_r = proj[0, :].reshape(H, W)
-    v_r = proj[1, :].reshape(H, W)
-
-    # 5. 从右目图像采样颜色（双线性插值）
-    color_right = color_right.permute(2, 0, 1).unsqueeze(0)  # (1, C, H, W)
-    grid_x = 2 * (u_r / (W - 1)) - 1
-    grid_y = 2 * (v_r / (H - 1)) - 1
-    grid = torch.stack((grid_x, grid_y), dim=-1).unsqueeze(0)
-    sampled_color = torch.nn.functional.grid_sample(color_right, grid, align_corners=True)
-    sampled_color = sampled_color.squeeze().permute(1, 2, 0)  # (H, W, C)
-
-    # 6. 有效点掩码（在图像内且z>0）
-    valid = (proj[2, :] > 0) & (u_r >= 0) & (u_r < W) & (v_r >= 0) & (v_r < H)
-    pts_cam_right = pts_cam_right[valid]
-    sampled_color = sampled_color.reshape(-1, 3)[valid]
-
-    return pts_cam_right, sampled_color
-
-def initialize_first_timestep(dataset, num_frames, scene_radius_depth_ratio, mean_sq_dist_method, densify_dataset=None, gaussian_distribution=None, num_objects=16):
-    # Get RGB-D Data & Camera Parameters
-    color, color_right, depth, depth_right, intrinsics, pose, pose_right, gt_objects, gt_objects_right = dataset[0]
-
-    # Process RGB-D Data
     color = color.permute(2, 0, 1) / 255 # (H, W, C) -> (C, H, W)
     color_right = color_right.permute(2, 0, 1) / 255
-    depth = depth.permute(2, 0, 1) # (H, W, C) -> (C, H, W)
-    if depth_right is not None:
-        depth_right = depth_right.permute(2, 0, 1)
+    # depth = depth.permute(2, 0, 1) # (H, W, C) -> (C, H, W)
+
+    def process_image(img):
+        if len(img.shape) == 3 and img.shape[0] in [1, 3]:  # 已经是 [C, H, W] 格式
+            img_np = img.permute(1, 2, 0).cpu().numpy()  # 转换为 [H, W, C] 以便处理
+        else:
+            img_np = img.cpu().numpy()
+            
+        # 如果是3通道图像，转换为灰度图
+        if len(img_np.shape) == 3:
+            if img_np.shape[2] in [1, 3]:
+                img_np = img_np.mean(axis=2)
+                
+        # 模拟RGB三通道输入
+        img_np = np.stack([img_np, img_np, img_np], axis=2)
+        img_tensor = torch.from_numpy(img_np).permute(2, 0, 1).float()
+        return img_tensor[None].cuda()  # 添加batch维度并移到GPU
+
+    # 处理左右图像
+    color_processed = process_image(color)
+    color_right_processed = process_image(color_right)
         
     # Process Camera Parameters
     intrinsics = intrinsics[:3, :3]
     w2c = torch.linalg.inv(pose)
-    w2c_right = torch.linalg.inv(pose_right)
 
     # Setup Camera
     cam = get_rasterizationSettings(color.shape[2], color.shape[1], intrinsics.cpu().numpy(), w2c.detach().cpu().numpy())
 
     # Get Initial Point Cloud (PyTorch CUDA Tensor)
-    mask = (depth > 0) # Mask out invalid depth values
-    mask = mask.reshape(-1)
-    pt_cld_left, mean3_sq_dist = get_pointcloud(color, depth, intrinsics, w2c, 
-                                                mask=mask, compute_mean_sq_dist=True, 
-                                                mean_sq_dist_method=mean_sq_dist_method)
+    args = Namespace(
+        focal_length=320.0,
+        baseline=0.25,
+        valid_iters=7)
+    model_args = SimpleNamespace(
+        restore_ckpt="submodules/RAFT-Stereo/models/raftstereo-sceneflow.pth",
+        corr_implementation = 'alt',
+        shared_backbone = False,
+        n_downsample = 2,
+        n_gru_layers = 3,
+        slow_fast_gru = False,
+        hidden_dims = [128, 128, 128],
+        context_dims = [128, 128, 128],
+        corr_levels = 4,
+        corr_radius = 4,
+        num_frames = 2,
+        query_feat_dim = 128,
+        context_norm = "batch",
+        dropout = 0.0,
+        mixed_precision = True,
+        alternate_corr = False
+    )
 
-    pt_cld_right = None
-    if depth_right is not None:
-        mask_right = (depth_right > 0)
-        mask_right = mask_right.reshape(-1)
-        pt_cld_right, mean3_sq_dist_right = get_pointcloud(color_right, depth_right, intrinsics, w2c_right,
-                                        mask=mask_right, compute_mean_sq_dist=True,
-                                        mean_sq_dist_method=mean_sq_dist_method)
-    else:
-        T_left_to_right = torch.linalg.inv(pose_right) @ pose
-        pt_cld_right, color_right_pts = generate_right_pointcloud_from_left(
-            depth.squeeze(0), color_right, intrinsics, T_left_to_right
-        )
+    model = torch.nn.DataParallel(RAFTStereo(model_args))
+    state_dict = torch.load(model_args.restore_ckpt)
+    model.load_state_dict(state_dict)
+    model.cuda()
+    model.eval()
 
-    init_pt_cld = np.concatenate([pt_cld_left.cpu().numpy(), pt_cld_right.cpu().numpy()], axis=0)
-    mean3_sq_dist = torch.cat([mean3_sq_dist, mean3_sq_dist_right], dim=0)
-    init_pt_cld, mean3_sq_dist = remove_duplicate_points_single_array(init_pt_cld, mean3_sq_dist, threshold=0.005)
+    left_image = color_processed
+    right_image = color_right_processed
+
+    with torch.no_grad():
+        _, disparity = model(left_image, right_image, iters=args.valid_iters, test_mode=True)
+
+    disparity = disparity.cpu().numpy()[0, 0]
+    disparity = np.abs(disparity)
+    confidence = estimate_disparity_confidence(disparity, left_image, right_image)
+    print(f"Confidence range: {confidence.min()} to {confidence.max()}")
+    # print(f"Disparity range: {disparity.min()} to {disparity.max()}")
+    # print(f"Disparity mean: {disparity.mean()}")
+
+    # 根据公式 depth = (f * B) / disparity 计算深度
+    valid_disparity = np.where(disparity > 0.1, disparity, 0.1)
+    depth = (args.focal_length * args.baseline) / valid_disparity
+    # depth = 1.0 / depth
+    # print(f"Depth range: {depth.min()} to {depth.max()}")
+    # print(f"Depth mean: {depth.mean()}")
+
+    init_pt_cld, mean3_sq_dist = get_pointcloud(color, depth, intrinsics, w2c, 
+                                            compute_mean_sq_dist=True, 
+                                            mean_sq_dist_method=mean_sq_dist_method)
 
     # Initialize Parameters
     params, variables = initialize_params(init_pt_cld, num_frames, mean3_sq_dist, gaussian_distribution, num_objects)
 
     # Initialize an estimate of scene radius for Gaussian-Splatting Densification
-    pt_cld_tensor = torch.tensor(init_pt_cld, device='cuda')
+    pt_cld_tensor = torch.from_numpy(init_pt_cld).cuda() if isinstance(init_pt_cld, np.ndarray) else init_pt_cld.clone().detach()
     max_depth_from_points = torch.max(pt_cld_tensor[:, 2])  # Z坐标即深度
-    variables['scene_radius'] = torch.max(depth) / max_depth_from_points
-
+    depth_tensor = torch.from_numpy(depth).cuda() if isinstance(depth, np.ndarray) else depth
+    variables['scene_radius'] = torch.max(depth_tensor) / max_depth_from_points
     return params, variables, intrinsics, w2c, cam
     
 def initialize_new_params(new_pt_cld, mean3_sq_dist, gaussian_distribution, num_objects=16):
@@ -358,13 +430,13 @@ def add_new_gaussians_alpha(params, variables, curr_data, densify_thres, time_id
                                 curr_w2c, mask=non_presence_mask, compute_mean_sq_dist=True,
                                 mean_sq_dist_method=mean_sq_dist_method, random_select=False)
     
-    new_pt_cld_right, mean3_sq_dist_right = get_pointcloud(curr_data['im_right'], curr_data['depth_right'], curr_data['intrinsics'],
-                                curr_w2c, mask=non_presence_mask, compute_mean_sq_dist=True,
-                                mean_sq_dist_method=mean_sq_dist_method, random_select=False)
-    new_pt_cld = np.concatenate([new_pt_cld.cpu().numpy(), new_pt_cld_right.cpu().numpy()], axis=0)
-    mean3_sq_dist = torch.cat([mean3_sq_dist, mean3_sq_dist_right], dim=0)
+    # new_pt_cld_right, mean3_sq_dist_right = get_pointcloud(curr_data['im_right'], curr_data['depth_right'], curr_data['intrinsics'],
+    #                             curr_w2c, mask=non_presence_mask, compute_mean_sq_dist=True,
+    #                             mean_sq_dist_method=mean_sq_dist_method, random_select=False)
+    # new_pt_cld = np.concatenate([new_pt_cld.cpu().numpy(), new_pt_cld_right.cpu().numpy()], axis=0)
+    # mean3_sq_dist = torch.cat([mean3_sq_dist, mean3_sq_dist_right], dim=0)
 
-    new_pt_cld, mean3_sq_dist = remove_duplicate_points_single_array(new_pt_cld, mean3_sq_dist, threshold=0.005)
+    # new_pt_cld, mean3_sq_dist = remove_duplicate_points_single_array(new_pt_cld, mean3_sq_dist, threshold=0.005)
 
     new_params = initialize_new_params(new_pt_cld, mean3_sq_dist, gaussian_distribution, num_objects)
     

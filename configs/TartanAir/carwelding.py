@@ -2,11 +2,11 @@ from datetime import datetime
 
 primary_device="cuda:0"
 
-serises_name = "abandonedfactory"
-scenes = ["P000", "P001", "P002"]
+serises_name = "carwelding"
+scenes = ["P001", "P002", "P004"]
 
-seed = 0
-scene_name = scenes[2]
+seed = 1
+scene_name = scenes[1]
 group_name = "TartanAir"
 run_name = str(datetime.now().strftime("%y%m%d-%H:%M:%S"))
 
@@ -14,11 +14,11 @@ basedir = f"/home/fu/data/TartanAir/{serises_name}/Easy"
 
 # General Settings
 first_frame_mapping_iters = 1000
-tracking_iters = 40
-mapping_iters = 60
+tracking_iters = 80
+mapping_iters = 120
 opt_rskm_interval=5
 densify_thres=0.1 # For Addition of new Gaussians
-end_frame = 100
+end_frame = 200
 
 # mapping
 use_semantic_for_mapping=True
@@ -35,9 +35,9 @@ config = dict(
     map_every=map_every, # Mapping every nth frame
     keyframe_every=keyframe_every, # Keyframe every nth frame
     mapping_window_size=mapping_window_size, # Mapping window size
-    report_global_progress_every=100, # Report Global Progress every nth frame
+    report_global_progress_every=50, # Report Global Progress every nth frame
     eval_every=5, # Evaluate every nth frame (at end of SLAM)
-    # scene_radius_depth_ratio=16288, # (Meters) Max First Frame Depth to Scene Radius Ratio (For Pruning/Densification)
+    # scene_radius_depth_ratio=10, # (Meters) Max First Frame Depth to Scene Radius Ratio (For Pruning/Densification)
     mean_sq_dist_method="projective", # ["projective", "knn"] (Type of Mean Squared Distance Calculation for Scale of Gaussians)
     gaussian_distribution="isotropic", # ["isotropic", "anisotropic"] (Isotropic -> Spherical Covariance, Anisotropic -> Ellipsoidal Covariance)
     densify_method="alpha", # ['depth_sil', 'alpha']

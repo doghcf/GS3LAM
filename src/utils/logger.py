@@ -168,7 +168,9 @@ def report_progress(params, data, i, progress_bar, iter_time_idx, every_i=1, qua
                                                                     #  transformed_pts)
         # depth_sil, _, _, = Renderer(raster_settings=data['cam'])(**depth_sil_rendervar)
         # rastered_depth = depth_sil[0, :, :].unsqueeze(0)
-        valid_depth_mask = (data['depth'] > 0)
+        im_shape = data['im'].shape
+        valid_depth_mask = torch.ones(im_shape[-2:], dtype=torch.bool, 
+                                    device=data['im'].device if isinstance(data['im'], torch.Tensor) else 'cpu')
         # silhouette = depth_sil[1, :, :]
         # presence_sil_mask = (silhouette > sil_thres)
 

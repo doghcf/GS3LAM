@@ -10,8 +10,10 @@
 #
 
 from typing import NamedTuple
+import os
 import torch.nn as nn
 import torch
+import matplotlib.pyplot as plt
 from . import _C
 
 def cpu_deep_copy_tuple(input_tuple):
@@ -231,4 +233,4 @@ class GaussianRasterizer(nn.Module):
             cov3D_precomp,
             raster_settings, 
         )
-
+    

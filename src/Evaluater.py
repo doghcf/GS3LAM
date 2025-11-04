@@ -69,6 +69,52 @@ def visualize_obj(objects):
         rgb_mask[objects == id] = colored_mask
     return rgb_mask
 
+def calculate_miou(gt_masks, pred_masks, num_classes):
+    """
+    计算 mIoU (mean Intersection over Union)
+    
+    Args:
+        gt_masks: list of ground truth masks (numpy arrays)
+        pred_masks: list of predicted masks (numpy arrays)
+        num_classes: 类别数量
+    
+    Returns:
+        miou: mean IoU
+        iou_per_class: 每个类别的 IoU
+    """
+    # 初始化混淆矩阵
+    confusion_matrix = np.zeros((num_classes, num_classes), dtype=np.int64)
+    
+    # 遍历所有帧计算混淆矩阵
+    for gt_mask, pred_mask in zip(gt_masks, pred_masks):
+        # 确保标签在有效范围内
+        gt_mask = np.clip(gt_mask, 0, num_classes - 1)
+        pred_mask = np.clip(pred_mask, 0, num_classes - 1)
+        
+        # 计算混淆矩阵
+        mask = (gt_mask >= 0) & (gt_mask < num_classes)
+        hist = np.bincount(
+            num_classes * gt_mask[mask].astype(int) + pred_mask[mask],
+            minlength=num_classes ** 2,
+        ).reshape(num_classes, num_classes)
+        confusion_matrix += hist
+    
+    # 计算每个类别的 IoU
+    intersection = np.diag(confusion_matrix)
+    union = np.sum(confusion_matrix, axis=1) + np.sum(confusion_matrix, axis=0) - np.diag(confusion_matrix)
+    
+    # 避免除零错误
+    iou_per_class = np.divide(intersection, union, out=np.zeros_like(intersection, dtype=float), where=union!=0)
+    
+    # 计算 mIoU (只计算存在的类别)
+    present_classes = union > 0
+    if np.sum(present_classes) > 0:
+        miou = np.mean(iou_per_class[present_classes])
+    else:
+        miou = 0.0
+    
+    return miou, iou_per_class, present_classes
+
 def eval(dataset, final_params, num_frames, eval_dir,
          mapping_iters, add_new_gaussians, wandb_run=None, wandb_save_qual=False, eval_every=1, save_frames=False, use_semantic=False, classifier=None):
     print("Evaluating Final Parameters ...")
@@ -115,9 +161,9 @@ def eval(dataset, final_params, num_frames, eval_dir,
     for time_idx in tqdm(range(num_frames)):
          # Get RGB-D Data & Camera Parameters
         if use_semantic:
-            color, _, depth, _, intrinsics, pose, _, gt_objects, _ = dataset[time_idx]
+            color, _, depth, intrinsics, pose, gt_objects = dataset[time_idx]
         else:
-            color, _, depth, _, intrinsics, pose, _ = dataset[time_idx]
+            color, _, depth, intrinsics, pose = dataset[time_idx]
 
         gt_w2c = torch.linalg.inv(pose)
         gt_w2c_list.append(gt_w2c)
@@ -175,12 +221,8 @@ def eval(dataset, final_params, num_frames, eval_dir,
             logits = classifier(rendered_objects)
             pred_obj = torch.argmax(logits, dim=0)
             # For mIoU
-            # gt_mask_list.append(gt_objects.cpu().numpy().astype(np.uint8))
-            # pred_mask_list.append(pred_obj.cpu().numpy().astype(np.uint8))
-            gt_mask_array = gt_objects.cpu().numpy().astype(np.uint8)
-            pred_mask_array = pred_obj.cpu().numpy().astype(np.uint8)
-            np.save(os.path.join(gt_mask_array_path, "gt_{:04d}.npy".format(time_idx)), gt_mask_array)
-            np.save(os.path.join(pred_mask_array_path, "pred_{:04d}.npy".format(time_idx)), pred_mask_array)
+            gt_mask_list.append(gt_objects.cpu().numpy().astype(np.uint8))
+            pred_mask_list.append(pred_obj.cpu().numpy().astype(np.uint8))
 
             pred_obj_mask = visualize_obj(pred_obj.cpu().numpy().astype(np.uint8))
             gt_rgb_mask = visualize_obj(gt_objects.cpu().numpy().astype(np.uint8))
@@ -283,6 +325,17 @@ def eval(dataset, final_params, num_frames, eval_dir,
     avg_l1 = l1_list.mean()
     avg_ssim = ssim_list.mean()
     avg_lpips = lpips_list.mean()
+
+    if use_semantic and len(gt_mask_list) > 0:
+        # 计算 mIoU
+        num_classes = 256  # 根据您的数据集调整
+        miou, iou_per_class, present_classes = calculate_miou(gt_mask_list, pred_mask_list, num_classes)
+        
+        print(f"Average IoU: {miou:.4f}")
+        avg_metric.append(f"Mean IoU: {miou:.4f}")
+        
+        if wandb_run is not None:
+            wandb_run.log({"Eval/mIoU": miou})
 
     
     print("Average PSNR: {:.3f}".format(avg_psnr))

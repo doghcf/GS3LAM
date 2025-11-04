@@ -1,4 +1,6 @@
 import torch
+import torchvision
+import os
 
 from src.utils.gaussian_utils import transform_to_frame
 from src.Render import transformed_params2rendervar
@@ -14,7 +16,7 @@ def initialize_optimizer(params, lrs_dict, tracking):
     
 
 def get_loss(params, curr_data, variables, iter_time_idx, loss_weights, 
-             use_l1,ignore_outlier_depth_loss, tracking=False,
+             use_l1, ignore_outlier_depth_loss, tracking=False,
              mapping=False, do_ba=False, use_reg_loss=False,
              semantic_decoder=None,
              use_semantic_for_tracking=True,
@@ -53,6 +55,20 @@ def get_loss(params, curr_data, variables, iter_time_idx, loss_weights,
     # Rendering
     rendervar['means2D'].retain_grad()
     rendered_image, rendered_objects, radii, rendered_depth, rendered_alpha = GaussianRasterizer(raster_settings=curr_data["cam"])(**rendervar)
+
+    # if rendered_image is not None:
+    #     rendered_image = torch.clamp(rendered_image, 0, 255)
+    #     torchvision.utils.save_image(rendered_image, f'./logs/debug/rendered_image_{iter_time_idx}.png')
+    # if rendered_objects is not None:
+    #     semantic_vis = torch.argmax(rendered_objects, dim=0, keepdim=True).float() / rendered_objects.shape[0]
+    #     torchvision.utils.save_image(semantic_vis, f'./logs/debug/rendered_objects_{iter_time_idx}.png')
+    # if rendered_depth is not None:
+    #     if rendered_depth.max() > 1.0:
+    #         depth_vis = rendered_depth / rendered_depth.max()
+    #     else:
+    #         depth_vis = rendered_depth
+    #     torchvision.utils.save_image(depth_vis, f'./logs/debug/rendered_depth_{iter_time_idx}.png')
+
     variables['means2D'] = rendervar['means2D']  # Gradient only accum from color render for densification
 
     # Mask with valid depth values (accounts for outlier depth values)
@@ -85,6 +101,26 @@ def get_loss(params, curr_data, variables, iter_time_idx, loss_weights,
     elif tracking:
         losses['im'] = torch.abs(curr_data['im'] - rendered_image).sum()
     else:
+        if rendered_image.dim() == 5:
+            rendered_image = rendered_image.squeeze(1)
+            curr_data['im'] = curr_data['im'].squeeze(1)
+        elif rendered_image.dim() == 2:
+            # 如果是灰度图像 [H, W]，添加必要的维度
+            rendered_image = rendered_image.unsqueeze(0).unsqueeze(0)
+            curr_data['im'] = curr_data['im'].unsqueeze(0).unsqueeze(0)
+        elif rendered_image.dim() == 3:
+            # 如果是 [C, H, W] 格式，添加批次维度
+            rendered_image = rendered_image.unsqueeze(0)
+            curr_data['im'] = curr_data['im'].unsqueeze(0)
+
+        # 确保两个图像具有相同的通道数
+        if rendered_image.shape[-3] != curr_data['im'].shape[-3]:
+            # 如果通道数不同，将它们统一为较小的通道数（通常是灰度）
+            min_channels = min(rendered_image.shape[-3], curr_data['im'].shape[-3])
+            if rendered_image.shape[-3] > min_channels:
+                rendered_image = rendered_image[:, :min_channels, :, :]
+            if curr_data['im'].shape[-3] > min_channels:
+                curr_data['im'] = curr_data['im'][:, :min_channels, :, :]
         losses['im'] = 0.8 * l1_loss_v1(rendered_image, curr_data['im']) + 0.2 * (1.0 - calc_ssim(rendered_image, curr_data['im']))
     
     # Semantic Loss

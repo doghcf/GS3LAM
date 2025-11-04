@@ -72,8 +72,8 @@ def run_gs3lam(config: dict):
 
     # Initialize Parameters & Canoncial Camera parameters
     params, variables, intrinsics, first_frame_w2c, cam = initialize_first_timestep(
-        dataset, num_frames, 0,
-        config['mean_sq_dist_method'], gaussian_distribution=config['gaussian_distribution'],
+        dataset, num_frames, config['mean_sq_dist_method'],
+        gaussian_distribution=config['gaussian_distribution'],
         num_objects=config['semantic']["num_objects"]
     )
     
@@ -111,25 +111,23 @@ def run_gs3lam(config: dict):
         #####################################################
 
         # Load RGBD frames incrementally instead of all frames
-        color, color_right, depth, depth_right, intrinsics, gt_pose, gt_pose_right, gt_objects, gt_objects_right = dataset[time_idx]
+        color, color_right, depth, intrinsics, gt_pose, gt_objects = dataset[time_idx]
+
+        color = color.permute(2, 0, 1) / 255 # (H, W, C) -> (C, H, W)
+        color_right = color_right.permute(2, 0, 1) / 255
+        depth = depth.permute(2, 0, 1) # (H, W, C) -> (C, H, W)
         
         # Process poses
         gt_w2c = torch.linalg.inv(gt_pose)
-        # Process RGB-D Data
-        color = color.permute(2, 0, 1) / 255 # BGR->RGB
-        color_right = color_right.permute(2, 0, 1) / 255
-        depth = depth.permute(2, 0, 1)
-        depth_right = depth_right.permute(2, 0, 1)
+        # Process Gray data 
         gt_w2c_all_frames.append(gt_w2c)
         curr_gt_w2c = gt_w2c_all_frames
 
         # Optimize only current time step for tracking
         iter_time_idx = time_idx
         # Initialize Mapping Data for selected frame
-        curr_data = {'cam': cam, 'im': color, 'im_right': color_right,
-                     'depth': depth, 'depth_right': depth_right,
-                     'obj': gt_objects, 'obj_right': gt_objects_right,
-                     'id': iter_time_idx, 'intrinsics': intrinsics, 
+        curr_data = {'cam': cam, 'im': color, 'im_right': color_right, 'depth': depth,
+                     'obj': gt_objects, 'intrinsics': intrinsics, 'id': iter_time_idx,
                      'w2c': first_frame_w2c, 'iter_gt_w2c_list': curr_gt_w2c}
 
 
@@ -227,7 +225,6 @@ def run_gs3lam(config: dict):
             with torch.no_grad():
                 params['cam_unnorm_rots'][..., time_idx] = candidate_cam_unnorm_rot
                 params['cam_trans'][..., time_idx] = candidate_cam_tran
-
         elif time_idx > 0 and config['tracking']['use_gt_poses']:
             with torch.no_grad():
                 # Get the ground truth pose relative to frame 0
@@ -238,6 +235,7 @@ def run_gs3lam(config: dict):
                 # Update the camera parameters
                 params['cam_unnorm_rots'][..., time_idx] = rel_w2c_rot_quat
                 params['cam_trans'][..., time_idx] = rel_w2c_tran
+
         # Update the runtime numbers
         tracking_end_time = time.time()
         tracking_frame_time_sum += tracking_end_time - tracking_start_time
@@ -285,6 +283,7 @@ def run_gs3lam(config: dict):
                 frame_iter_mapping = config['mapping']['first_frame_mapping_iters']
             else:
                 frame_iter_mapping = num_iters_mapping
+            
             if frame_iter_mapping > 0:
                 progress_bar = tqdm(range(frame_iter_mapping), desc=f"Mapping Time Step: {time_idx}, pts: {params['means3D'].shape[0]}")
             
@@ -297,6 +296,7 @@ def run_gs3lam(config: dict):
                     # Use Current Frame Data
                     iter_time_idx = time_idx
                     iter_color = color
+                    iter_color_right = color_right
                     iter_depth = depth
                     if config['mapping']["use_semantic_for_mapping"]:
                         iter_object = gt_objects
@@ -305,6 +305,7 @@ def run_gs3lam(config: dict):
                     # Use Keyframe Data
                     iter_time_idx = keyframe_list[keyframe_idx]['id']
                     iter_color = keyframe_list[keyframe_idx]['color']
+                    iter_color_right = keyframe_list[keyframe_idx]['color_right']
                     iter_depth = keyframe_list[keyframe_idx]['depth']
                     if config['mapping']["use_semantic_for_mapping"]:
                         iter_object = keyframe_list[keyframe_idx]['obj']
@@ -320,12 +321,13 @@ def run_gs3lam(config: dict):
                 iter_gt_w2c = gt_w2c_all_frames[:iter_time_idx+1]
                 
                 if config['mapping']["use_semantic_for_mapping"]:
-                    iter_data = {'cam': cam, 'im': iter_color, 'depth': iter_depth, 'id': iter_time_idx, 
-                             'intrinsics': intrinsics, 'w2c': first_frame_w2c, 'iter_gt_w2c_list': iter_gt_w2c,
-                             "obj": iter_object}
+                    iter_data = {'cam': cam, 'im': iter_color, 'im_right': iter_color_right, 'depth': iter_depth,
+                                 'id': iter_time_idx, 'intrinsics': intrinsics,
+                                 'w2c': first_frame_w2c, 'iter_gt_w2c_list': iter_gt_w2c, "obj": iter_object}
                 else:
-                    iter_data = {'cam': cam, 'im': iter_color, 'depth': iter_depth, 'id': iter_time_idx, 
-                             'intrinsics': intrinsics, 'w2c': first_frame_w2c, 'iter_gt_w2c_list': iter_gt_w2c}
+                    iter_data = {'cam': cam, 'im': iter_color, 'im_right': iter_color_right, 'depth': iter_depth,
+                                  'id': iter_time_idx, 'intrinsics': intrinsics,
+                                  'w2c': first_frame_w2c, 'iter_gt_w2c_list': iter_gt_w2c}
                 
                 # Loss for current frame
                 loss, variables, losses = get_loss(params=params,
@@ -340,8 +342,7 @@ def run_gs3lam(config: dict):
                                                    use_semantic_for_mapping=config['mapping']['use_semantic_for_mapping'],
                                                    semantic_decoder=semantic_decoder,
                                                    num_classes=config['semantic']["num_classes"])
-                     
-               
+                               
                 loss.backward()
                 
                 with torch.no_grad():
@@ -410,8 +411,8 @@ def run_gs3lam(config: dict):
                 curr_w2c[:3, :3] = build_rotation(curr_cam_rot)
                 curr_w2c[:3, 3] = curr_cam_tran
                 # Initialize Keyframe Info
-                curr_keyframe = {'id': time_idx, 'est_w2c': curr_w2c,
-                                 'color': color, 'depth': depth, "obj": gt_objects}
+                curr_keyframe = {'id': time_idx, 'est_w2c': curr_w2c, 'color': color, 
+                                 'color_right': color_right,'depth': depth, "obj": gt_objects}
                 
                 # Add to keyframe list
                 keyframe_list.append(curr_keyframe)

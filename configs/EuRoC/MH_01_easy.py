@@ -1,29 +1,25 @@
 from datetime import datetime
 
 primary_device="cuda:0"
-
-scenes = ["2013_05_28_drive_0003_sync_copy"]
 seed = 1
-scene_name = scenes[0]
-group_name = "KITTI360"
-run_name = str(datetime.now().strftime("%y%m%d-%H:%M:%S"))
+scene_name = "MH_01_easy"
 
-basedir = "/home/fu/data/KITTI-360"
+basedir = "/home/fu/data/EuRoC"
 
-# General Settings
 first_frame_mapping_iters = 1000
 tracking_iters = 40
 mapping_iters = 60
-opt_rskm_interval=5
-densify_thres=0.1 # For Addition of new Gaussians
-end_frame = 100 
+opt_rskm_interval = 5
+densify_thres=0.1 # For adding new Gaussians
+end_frame = 1
 
-# mapping
-use_semantic_for_mapping = True
-
-map_every = 1 # add Gaussians
+use_semantic_for_mapping=True
+map_every = 1
 keyframe_every = 5
 mapping_window_size = 24
+
+group_name = "EuRoC"
+run_name = str(datetime.now().strftime("%y%m%d-%H:%M:%S"))
 
 config = dict(
     workdir=f"./logs/{group_name}/{scene_name}_seed{seed}",
@@ -33,23 +29,24 @@ config = dict(
     map_every=map_every, # Mapping every nth frame
     keyframe_every=keyframe_every, # Keyframe every nth frame
     mapping_window_size=mapping_window_size, # Mapping window size
-    report_global_progress_every=20, # Report Global Progress every nth frame
+    report_global_progress_every=100, # Report Global Progress every nth frame
     eval_every=5, # Evaluate every nth frame (at end of SLAM)
-    # scene_radius_depth_ratio=10, # (Meters) Max First Frame Depth to Scene Radius Ratio (For Pruning/Densification)
-    mean_sq_dist_method="projective", # ["projective", "knn"] (Type of Mean Squared Distance Calculation for Scale of Gaussians)
+    scene_radius_depth_ratio=3, # (Meters) Max First Frame Depth to Scene Radius Ratio (For Pruning/Densification)
+    mean_sq_dist_method="projective", # Mean Squared Distance Calculation for Scale of Gaussians
     gaussian_distribution="isotropic", # ["isotropic", "anisotropic"] (Isotropic -> Spherical Covariance, Anisotropic -> Ellipsoidal Covariance)
     densify_method="alpha", # ['depth_sil', 'alpha']
     report_iter_progress=False,
     load_checkpoint=False,
     checkpoint_time_idx=0,
-    save_checkpoints=False, # Save Checkpoints
-    checkpoint_interval=100, # Checkpoint Interval
+    save_checkpoints=False,
+    checkpoint_interval=100,
     data=dict(
         basedir=basedir,
-        gradslam_data_cfg=f"./configs/camera/kitti360.yaml",
-        sequence=f"{scene_name}",
-        desired_image_height=376,
-        desired_image_width=1408,
+        gradslam_data_cfg="./configs/camera/euroc.yaml",
+        sequence=scene_name,
+        use_train_split=True,
+        desired_image_height=480,
+        desired_image_width=752,
         start=0,
         end=end_frame,
         stride=1,
@@ -61,10 +58,22 @@ config = dict(
         pretrain_path="./pretrain",
         num_objects=16, # in_channels
         num_classes=256, # out_channels
+        inter_dims=[], #[64, 128],
+        use_obj_3d_loss=False,
+        use_3d_obj_for_tracking=False,
+        reg3d_interval=5,
+        reg3d_k = 5,
+        reg3d_lambda_val = 2,
+        reg3d_max_points = 2_0000,
+        reg3d_sample_size = 1000,
+        loss_obj_weight=1.0,
+        loss_obj_3d_weight=1_000.0,
     ),
     tracking=dict(
         use_gt_poses=False, # Use GT Poses for Tracking
         use_semantic_for_tracking=True,
+        use_obj2d_for_tracking=False,
+        use_obj3d_for_tracking=False,
         forward_prop=True, # Forward Propagate Poses
         num_iters=tracking_iters,
         use_alpha_for_loss=True,
@@ -107,14 +116,16 @@ config = dict(
         use_l1=True,
         ignore_outlier_depth_loss=True,
         use_sil_for_loss=False,
-        use_reg_loss=True,
+        # regularize Gaussians
+        use_reg_loss=False,
+        #use_reg_loss=False,
         use_uncertainty_for_loss_mask=False,
         use_uncertainty_for_loss=False,
         use_chamfer=False,
         loss_weights=dict(
             im=0.5,
             depth=1.0,
-            obj=0.01,
+            obj=0.1,    #0.01
             big_gaussian_reg=0.01,
             small_gaussian_reg=0.001,
         ),
