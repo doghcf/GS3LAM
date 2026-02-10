@@ -6,7 +6,7 @@ serises_name = "hospital"
 scenes = ["P000", "P001", "P002"]
 
 seed = 1
-scene_name = scenes[2]
+scene_name = scenes[1]
 group_name = "TartanAir"
 run_name = str(datetime.now().strftime("%y%m%d-%H:%M:%S"))
 
@@ -14,8 +14,8 @@ basedir = f"/home/fu/data/TartanAir/{serises_name}/Easy"
 
 # General Settings
 first_frame_mapping_iters = 1000
-tracking_iters = 80
-mapping_iters = 120
+tracking_iters = 360
+mapping_iters = 150
 opt_rskm_interval=5
 densify_thres=0.1 # For Addition of new Gaussians
 end_frame = 200

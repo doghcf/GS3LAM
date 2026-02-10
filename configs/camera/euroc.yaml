@@ -7,6 +7,7 @@ camera_params:
   fy: 457.296
   cx: 367.215
   cy: 248.375
+  png_depth_scale: 1.0
   crop_edge: 0
 camera_params2:
   image_height: 480
@@ -15,6 +16,7 @@ camera_params2:
   fy: 456.134
   cx: 379.999
   cy: 255.238
+  png_depth_scale: 1.0
   crop_edge: 0
 T_c1_c2:
   - [0.999997256477797, -0.002317135723275, -0.000343393120620, 0.110074137800478,

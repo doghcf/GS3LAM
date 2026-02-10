@@ -6,9 +6,9 @@ import numpy as np
 import torch
 from natsort import natsorted
 
-from  src.datasets.basedataset import GradSLAMDataset2
+from  src.datasets.basedataset import GradSLAMDatasetStereo
 
-class EuRoCSemanticDataset(GradSLAMDataset2):
+class EuRoCSemanticDataset(GradSLAMDatasetStereo):
     def __init__(
         self,
         config_dict,
@@ -24,7 +24,7 @@ class EuRoCSemanticDataset(GradSLAMDataset2):
         embedding_dim: Optional[int] = 512,
         **kwargs,
     ):
-        print("Load Replica dataset!!!")
+        print("Load Euroc dataset!!!")
         self.input_folder = os.path.join(basedir, sequence)
         self.pose_path = os.path.join(self.input_folder, "mav0/state_groundtruth_estimate0/data.csv")
         super().__init__(
@@ -44,11 +44,10 @@ class EuRoCSemanticDataset(GradSLAMDataset2):
         color_paths = natsorted(glob.glob(f"{self.input_folder}/mav0/cam0/data/*.png"))
         color_paths2 = natsorted(glob.glob(f"{self.input_folder}/mav0/cam1/data/*.png"))
         object_paths = natsorted(glob.glob(f"{self.input_folder}/mav0/seg0/data/*.png"))
-        object_paths2 = natsorted(glob.glob(f"{self.input_folder}/mav0/seg1/data/*.png"))
         embedding_paths = None
         if self.load_embeddings:
             embedding_paths = natsorted(glob.glob(f"{self.input_folder}/{self.embedding_dir}/*.pt"))
-        return color_paths, color_paths2, object_paths, object_paths2, embedding_paths
+        return color_paths, color_paths2, object_paths, embedding_paths
 
     def load_poses(self):
         # 首先获取图像时间戳

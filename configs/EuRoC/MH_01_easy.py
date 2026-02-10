@@ -6,12 +6,12 @@ scene_name = "MH_01_easy"
 
 basedir = "/home/fu/data/EuRoC"
 
-first_frame_mapping_iters = 1000
-tracking_iters = 40
-mapping_iters = 60
+first_frame_mapping_iters = 5000
+tracking_iters = 360
+mapping_iters = 150
 opt_rskm_interval = 5
 densify_thres=0.1 # For adding new Gaussians
-end_frame = 1
+end_frame = 1000
 
 use_semantic_for_mapping=True
 map_every = 1
@@ -47,7 +47,7 @@ config = dict(
         use_train_split=True,
         desired_image_height=480,
         desired_image_width=752,
-        start=0,
+        start=800,
         end=end_frame,
         stride=1,
         num_frames=-1,

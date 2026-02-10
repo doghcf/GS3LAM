@@ -9,6 +9,7 @@ https://github.com/cvg/nice-slam/blob/645b53af3dc95b4b348de70e759943f7228a61ca/s
 """
 
 import os
+import sys
 from typing import Optional, Union
 
 import cv2
@@ -18,6 +19,10 @@ import torch
 
 from src.datasets.geometryutils import relative_transformation
 from src.datasets import datautils
+sys.path.append(os.path.expanduser('/home/fu/GS3LAM/submodules/RAFT-Stereo'))
+from types import SimpleNamespace
+from argparse import Namespace
+from core.raft_stereo import RAFTStereo
 
 def to_scalar(inp: Union[np.ndarray, torch.Tensor, float]) -> Union[int, float]:
     """
@@ -582,9 +587,9 @@ class GradSLAMDataset2(torch.utils.data.Dataset):
         color_path = self.color_paths[index]
         color_path_right = self.color_paths_right[index]
         color = np.asarray(imageio.imread(color_path), dtype=float)
-        color_path_right = np.asarray(imageio.imread(color_path_right), dtype=float)
+        color_right = np.asarray(imageio.imread(color_path_right), dtype=float)
         color = self._preprocess_color(color)
-        color_right = self._preprocess_color(color_path_right)
+        color_right = self._preprocess_color(color_right)
         
         depth_path = self.depth_paths[index]
         if ".png" in depth_path:
@@ -647,3 +652,333 @@ class GradSLAMDataset2(torch.utils.data.Dataset):
                 objects.to(self.device).type(self.dtype),
             )
       
+class GradSLAMDatasetStereo(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        config_dict,
+        stride: Optional[int] = 1,
+        start: Optional[int] = 0,
+        end: Optional[int] = -1,
+        desired_height: int = 480,
+        desired_width: int = 640,
+        channels_first: bool = False,
+        normalize_color: bool = False,
+        device="cuda:0",
+        dtype=torch.float,
+        load_embeddings: bool = False,
+        embedding_dir: str = "feat_lseg_240_320",
+        embedding_dim: int = 512,
+        relative_pose: bool = True,  # If True, the pose is relative to the first frame
+        **kwargs,
+    ):
+        super().__init__()
+        self.name = config_dict["dataset_name"]
+        self.device = device
+        self.png_depth_scale = config_dict["camera_params"]["png_depth_scale"]
+
+        self.orig_height = config_dict["camera_params"]["image_height"]
+        self.orig_width = config_dict["camera_params"]["image_width"]
+        self.fx = config_dict["camera_params"]["fx"]
+        self.fy = config_dict["camera_params"]["fy"]
+        self.cx = config_dict["camera_params"]["cx"]
+        self.cy = config_dict["camera_params"]["cy"]
+        self.fx2 = config_dict["camera_params2"]["fx"]
+        self.fy2 = config_dict["camera_params2"]["fy"]
+        self.cx2 = config_dict["camera_params2"]["cx"]
+        self.cy2 = config_dict["camera_params2"]["cy"]
+        self.extrinsics = config_dict["T_c1_c2"]
+
+        self.dtype = dtype
+
+        self.desired_height = desired_height
+        self.desired_width = desired_width
+        self.height_downsample_ratio = float(self.desired_height) / self.orig_height
+        self.width_downsample_ratio = float(self.desired_width) / self.orig_width
+        self.channels_first = channels_first
+        self.normalize_color = normalize_color
+
+        self.load_embeddings = load_embeddings
+        self.embedding_dir = embedding_dir
+        self.embedding_dim = embedding_dim
+        self.relative_pose = relative_pose
+
+        self.start = start
+        self.end = end
+        if start < 0:
+            raise ValueError("start must be positive. Got {0}.".format(stride))
+        if not (end == -1 or end > start):
+            raise ValueError("end ({0}) must be -1 (use all images) or greater than start ({1})".format(end, start))
+
+        self.distortion = (
+            np.array(config_dict["camera_params"]["distortion"])
+            if "distortion" in config_dict["camera_params"]
+            else None
+        )
+        self.crop_size = (
+            config_dict["camera_params"]["crop_size"] if "crop_size" in config_dict["camera_params"] else None
+        )
+
+        self.crop_edge = None
+        if "crop_edge" in config_dict["camera_params"].keys():
+            self.crop_edge = config_dict["camera_params"]["crop_edge"]
+
+        self.color_paths, self.color_paths_right, self.object_paths, self.embedding_paths = self.get_filepaths()
+        
+        if self.load_embeddings:
+            if len(self.color_paths) != len(self.embedding_paths):
+                raise ValueError("Mismatch between number of color images and number of embedding files.")
+        self.num_imgs = len(self.color_paths)
+        self.poses = self.load_poses()
+
+        if self.end == -1:
+            self.end = self.num_imgs
+
+        self.color_paths = self.color_paths[self.start : self.end : stride]
+        self.color_paths_right = self.color_paths_right[self.start : self.end : stride]
+        self.object_paths = self.object_paths[self.start : self.end : stride]
+
+        if self.load_embeddings:
+            self.embedding_paths = self.embedding_paths[self.start : self.end : stride]
+        self.poses = self.poses[self.start : self.end : stride]
+        # Tensor of retained indices (indices of frames and poses that were retained)
+        self.retained_inds = torch.arange(self.num_imgs)[self.start : self.end : stride]
+        # Update self.num_images after subsampling the dataset
+        self.num_imgs = len(self.color_paths)
+
+        self.poses = torch.stack(self.poses)
+
+        if self.relative_pose: # True
+            self.transformed_poses = self._preprocess_poses(self.poses)
+        else:
+            self.transformed_poses = self.poses
+
+    def __len__(self):
+        return self.num_imgs
+
+    def get_filepaths(self):
+        """Return paths to color images, depth images. Implement in subclass."""
+        raise NotImplementedError
+
+    def load_poses(self):
+        """Load camera poses. Implement in subclass."""
+        raise NotImplementedError
+
+    def _preprocess_color(self, color: np.ndarray):
+        r"""Preprocesses the color image by resizing to :math:`(H, W, C)`, (optionally) normalizing values to
+        :math:`[0, 1]`, and (optionally) using channels first :math:`(C, H, W)` representation.
+
+        Args:
+            color (np.ndarray): Raw input rgb image
+
+        Retruns:
+            np.ndarray: Preprocessed rgb image
+
+        Shape:
+            - Input: :math:`(H_\text{old}, W_\text{old}, C)`
+            - Output: :math:`(H, W, C)` if `self.channels_first == False`, else :math:`(C, H, W)`.
+        """
+        color = cv2.resize(
+            color,
+            (self.desired_width, self.desired_height),
+            interpolation=cv2.INTER_LINEAR,
+        )
+        if self.normalize_color:
+            color = datautils.normalize_image(color)
+        if self.channels_first:
+            color = datautils.channels_first(color)
+        return color
+    
+    def _preprocess_depth(self, depth: np.ndarray):
+        r"""Preprocesses the depth image by resizing, adding channel dimension, and scaling values to meters. Optionally
+        converts depth from channels last :math:`(H, W, 1)` to channels first :math:`(1, H, W)` representation.
+
+        Args:
+            depth (np.ndarray): Raw depth image
+
+        Returns:
+            np.ndarray: Preprocessed depth
+
+        Shape:
+            - depth: :math:`(H_\text{old}, W_\text{old})`
+            - Output: :math:`(H, W, 1)` if `self.channels_first == False`, else :math:`(1, H, W)`.
+        """
+        depth = cv2.resize(
+            depth.astype(float),
+            (self.desired_width, self.desired_height),
+            interpolation=cv2.INTER_NEAREST,
+        )
+        depth = np.expand_dims(depth, -1)
+        if self.channels_first:
+            depth = datautils.channels_first(depth)
+        return depth / self.png_depth_scale
+    
+    def _preprocess_objects(self, objects: np.ndarray):
+        objects = cv2.resize(
+            objects,
+            (self.desired_width, self.desired_height),
+            interpolation=cv2.INTER_LINEAR,
+        )
+        return objects
+    
+    def _preprocess_poses(self, poses: torch.Tensor):
+        r"""Preprocesses the poses by setting first pose in a sequence to identity and computing the relative
+        homogenous transformation for all other poses.
+
+        Args:
+            poses (torch.Tensor): Pose matrices to be preprocessed
+
+        Returns:
+            Output (torch.Tensor): Preprocessed poses
+
+        Shape:
+            - poses: :math:`(L, 4, 4)` where :math:`L` denotes sequence length.
+            - Output: :math:`(L, 4, 4)` where :math:`L` denotes sequence length.
+        """
+        return relative_transformation(
+            poses[0].unsqueeze(0).repeat(poses.shape[0], 1, 1),
+            poses,
+            orthogonal_rotations=False,
+        )
+
+    def get_cam_K(self):
+        """
+        Return left camera intrinsics matrix K
+
+        Returns:
+            K (torch.Tensor): Camera intrinsics matrix, of shape (3, 3)
+        """
+        K = as_intrinsics_matrix([self.fx, self.fy, self.cx, self.cy])
+        K = torch.from_numpy(K)
+        return K
+    
+    def get_cam_K2(self):
+        """
+        Return right camera intrinsics matrix K
+
+        Returns:
+            K (torch.Tensor): Camera intrinsics matrix, of shape (3, 3)
+        """
+        K = as_intrinsics_matrix([self.fx2, self.fy2, self.cx2, self.cy2])
+        K = torch.from_numpy(K)
+        return K
+
+    def read_embedding_from_file(self, embedding_path: str):
+        """
+        Read embedding from file and process it. To be implemented in subclass for each dataset separately.
+        """
+        raise NotImplementedError
+
+    def __getitem__(self, index):
+        color_path = self.color_paths[index]
+        color_path_right = self.color_paths_right[index]
+        color = np.asarray(imageio.imread(color_path), dtype=float)
+        color_right = np.asarray(imageio.imread(color_path_right), dtype=float)
+
+        color = np.expand_dims(color, axis=-1)
+        color_right = np.expand_dims(color_right, axis=-1)
+        color = np.repeat(color, 3, axis=2)
+        color_right = np.repeat(color_right, 3, axis=2)
+
+        color = self._preprocess_color(color)
+        color_right = self._preprocess_color(color_right)
+
+        color_temp = torch.from_numpy(color).permute(2, 0, 1).float() / 255.0
+        color_right_temp = torch.from_numpy(color_right).permute(2, 0, 1).float() / 255.0
+
+        color_tensor = color_temp.unsqueeze(0)
+        color_right_tensor = color_right_temp.unsqueeze(0)
+
+        color_tensor = color_tensor.cuda()
+        color_right_tensor = color_right_tensor.cuda()
+ 
+        args = Namespace(
+            focal_length=458.654,
+            baseline=0.110033,
+            valid_iters=7)
+        model_args = SimpleNamespace(
+            restore_ckpt="submodules/RAFT-Stereo/models/raftstereo-sceneflow.pth",
+            corr_implementation = 'alt',
+            shared_backbone = False,
+            n_downsample = 2,
+            n_gru_layers = 3,
+            slow_fast_gru = False,
+            hidden_dims = [128, 128, 128],
+            context_dims = [128, 128, 128],
+            corr_levels = 4,
+            corr_radius = 4,
+            num_frames = 2,
+            query_feat_dim = 128,
+            context_norm = "batch",
+            dropout = 0.0,
+            mixed_precision = True,
+            alternate_corr = False
+        )
+
+        model = torch.nn.DataParallel(RAFTStereo(model_args))
+        state_dict = torch.load(model_args.restore_ckpt)
+        model.load_state_dict(state_dict)
+        model.cuda()
+        model.eval()
+
+        with torch.no_grad():
+            _, disparity = model(color_tensor, color_right_tensor, iters=args.valid_iters, test_mode=True)
+
+        disparity = disparity.cpu().numpy()[0, 0]
+        disparity = np.abs(disparity)
+
+        # 根据公式 depth = (f * B) / disparity 计算深度
+        valid_disparity = np.where(disparity > 0.1, disparity, 0.1)
+        depth = (args.focal_length * args.baseline) / valid_disparity
+
+        depth = self._preprocess_depth(depth)
+        depth = torch.from_numpy(depth)
+
+        object_path = self.object_paths[index]
+        if ".png" in object_path:
+            objects = np.asarray(imageio.imread(object_path), dtype=float)
+        elif ".npy" in object_path:
+            objects = np.load(object_path)
+        elif ".exr" in object_path:
+            print("Error object format!!!")
+
+        objects = self._preprocess_objects(objects)
+        objects = torch.from_numpy(objects)
+
+        K = as_intrinsics_matrix([self.fx, self.fy, self.cx, self.cy])
+        K_right = as_intrinsics_matrix([self.fx2, self.fy2, self.cx2, self.cy2])
+        if self.distortion is not None:
+            # undistortion is only applied on color image, not depth!
+            color = cv2.undistort(color, K, self.distortion)
+            color_right = cv2.undistort(color_right, K_right, self.distortion)
+
+
+        color = torch.from_numpy(color)
+        color_right = torch.from_numpy(color_right)
+        K = torch.from_numpy(K)
+        
+        K = datautils.scale_intrinsics(K, self.height_downsample_ratio, self.width_downsample_ratio)
+        intrinsics = torch.eye(4).to(K)
+        intrinsics[:3, :3] = K
+
+        pose = self.transformed_poses[index]
+
+        if self.load_embeddings: # False
+            embedding = self.read_embedding_from_file(self.embedding_paths[index])
+            return (
+                color.to(self.device).type(self.dtype),
+                color_right.to(self.device).type(self.dtype),
+                depth.to(self.device).type(self.dtype),
+                intrinsics.to(self.device).type(self.dtype),
+                pose.to(self.device).type(self.dtype),
+                objects.to(self.device).type(self.dtype),
+                embedding.to(self.device),  # Allow embedding to be another dtype
+            )
+
+        return (
+                color.to(self.device).type(self.dtype),
+                color_right.to(self.device).type(self.dtype),
+                depth.to(self.device).type(self.dtype),
+                intrinsics.to(self.device).type(self.dtype),
+                pose.to(self.device).type(self.dtype),
+                objects.to(self.device).type(self.dtype),
+            )

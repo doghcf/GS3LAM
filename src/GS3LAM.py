@@ -92,6 +92,9 @@ def run_gs3lam(config: dict):
     tracking_frame_time_count = 0
     mapping_frame_time_sum = 0
     mapping_frame_time_count = 0
+    scale_list = []
+    scale_std_list = []
+    scale_step_list = []
 
     # Iterate over Scan
     t_fps_list = []
@@ -113,9 +116,9 @@ def run_gs3lam(config: dict):
         # Load RGBD frames incrementally instead of all frames
         color, color_right, depth, intrinsics, gt_pose, gt_objects = dataset[time_idx]
 
-        color = color.permute(2, 0, 1) / 255 # (H, W, C) -> (C, H, W)
+        color = color.permute(2, 0, 1) / 255
         color_right = color_right.permute(2, 0, 1) / 255
-        depth = depth.permute(2, 0, 1) # (H, W, C) -> (C, H, W)
+        depth = depth.permute(2, 0, 1)
         
         # Process poses
         gt_w2c = torch.linalg.inv(gt_pose)
@@ -252,6 +255,16 @@ def run_gs3lam(config: dict):
                 ckpt_output_dir = os.path.join(config["workdir"], config["run_name"])
                 save_params_ckpt(params, ckpt_output_dir, time_idx)
                 print('Failed to evaluate trajectory.')
+
+        # Record mean Gaussian scale (aligned with evaluation cadence)
+        if time_idx == 0 or (time_idx + 1) % config['eval_every'] == 0:
+            with torch.no_grad():
+                scales = torch.exp(params['log_scales'])
+                mean_scale = scales.mean().item()
+                std_scale = scales.std().item()
+            scale_list.append(mean_scale)
+            scale_std_list.append(std_scale)
+            scale_step_list.append(time_idx)
 
         #####################################################
         ###                 Mapping                       ###
@@ -458,6 +471,9 @@ def run_gs3lam(config: dict):
     keys = np.array(list(frame_freps.keys()))
     values = np.array(list(frame_freps.values()))
     np.savez(os.path.join(eval_dir, "keyframe_freq_keys.npz"), keys=keys, values=values)
+    if len(scale_list) > 0:
+        scale_arr = np.stack([np.array(scale_step_list), np.array(scale_list), np.array(scale_std_list)], axis=1)
+        np.savetxt(os.path.join(eval_dir, "scale.txt"), scale_arr, header="time_idx mean_scale std_scale")
     
     # Evaluate Final Parameters
     with torch.no_grad():

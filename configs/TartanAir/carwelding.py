@@ -5,20 +5,20 @@ primary_device="cuda:0"
 serises_name = "carwelding"
 scenes = ["P001", "P002", "P004"]
 
-seed = 1
-scene_name = scenes[1]
+seed = 2
+scene_name = scenes[0]
 group_name = "TartanAir"
 run_name = str(datetime.now().strftime("%y%m%d-%H:%M:%S"))
 
 basedir = f"/home/fu/data/TartanAir/{serises_name}/Easy"
 
 # General Settings
-first_frame_mapping_iters = 1000
+first_frame_mapping_iters = 4000
 tracking_iters = 80
 mapping_iters = 120
 opt_rskm_interval=5
 densify_thres=0.1 # For Addition of new Gaussians
-end_frame = 200
+end_frame = 1
 
 # mapping
 use_semantic_for_mapping=True

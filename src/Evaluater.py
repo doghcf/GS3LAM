@@ -170,8 +170,8 @@ def eval(dataset, final_params, num_frames, eval_dir,
         intrinsics = intrinsics[:3, :3]
 
         # Process RGB-D Data
-        color = color.permute(2, 0, 1) / 255 # (H, W, C) -> (C, H, W)
-        depth = depth.permute(2, 0, 1) # (H, W, C) -> (C, H, W)
+        color = color.permute(2, 0, 1) / 255
+        depth = depth.permute(2, 0, 1)
 
         if time_idx == 0:
             # Process Camera Parameters
